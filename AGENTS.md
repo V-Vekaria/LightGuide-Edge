@@ -147,8 +147,8 @@ Update the status column at the end of every working session. Do not delete rows
 
 | Phase | Gate (must be true to pass) | Target date | Status |
 |---|---|---|---|
-| P0 Setup | Repo scaffolded, docs locked, board flashes and prints all 3 sensors | 31 Jul | 🟡 in progress |
-| P0.1 Hardware safety | HC-SR04 ECHO level-shift verified; IMU revision identified; pin map confirmed | 31 Jul | ⬜ blocked on user |
+| P0 Setup | Repo scaffolded, docs locked, board flashes and prints all 3 sensors | 31 Jul | 🟡 IMU + LDR + OLED verified; ultrasonic failing |
+| P0.1 Hardware safety | HC-SR04 ECHO level-shift verified; IMU revision identified; pin map confirmed | 31 Jul | 🔴 **ECHO stuck HIGH — see §13** |
 | P1 Calibration | LDR→lux curve + ultrasonic→cm curve recorded against references | 1 Aug | ⬜ |
 | P2 Logger | Labelled CSV capture over serial working end-to-end | 1 Aug | ⬜ |
 | P3 Dataset | ≥250 samples/class × 6 classes, ≥3 sessions, held-out session reserved | 2 Aug | ⬜ |
@@ -168,21 +168,94 @@ Legend: ⬜ not started · 🟡 in progress · ✅ done · 🔴 blocked
 
 | Date | What changed | Next action |
 |---|---|---|
-| 2026-07-31 | Requirements + rubric extracted from handbook; CW1 promises reconciled; repo scaffolded; docs locked; bring-up firmware + capture tool written | Run `01_sensor_check`, resolve hardware safety items (§11) |
+| 2026-07-31 | Requirements + rubric extracted from handbook; CW1 promises reconciled; repo scaffolded; docs locked; bring-up firmware + capture tool + offline pipeline written and smoke-tested end to end on synthetic data | — |
+| 2026-07-31 | Flashed `01_sensor_check` to COM4. **Rev1 confirmed, IMU/OLED/LDR all verified working. Ultrasonic ECHO stuck HIGH — blocker, see §13.** Fixed two mbed-core firmware bugs (`pulseIn` timeout, I²C scanner) | **Fix the HC-SR04 wiring (§13), then re-run diagnostics** |
 
 ---
 
-## 11. Open decisions — answer these before P1
+## 11. Open decisions
 
-1. **B-number** — needed for every filename. → `TODO`
-2. **HC-SR04 supply voltage.** If ECHO is fed from a 5 V supply it will sit at 5 V and the
-   nRF52840 is **not** 5 V tolerant. Either use an HC-SR04**P**, run the module from 3.3 V,
-   or fit the ECHO divider in `docs/02-HARDWARE.md`. **Do not run long captures until this
-   is settled.**
-3. **Board revision** — Rev1 (LSM9DS1) or Rev2 (BMI270+BMM150). `01_sensor_check` detects it.
-4. **Buzzer** — not visible in the current build. Ship without it (LED + OLED only) or source one?
+1. **B-number** — needed for every filename. → `TODO` 🔴
+2. ~~HC-SR04 supply voltage~~ → superseded by the live fault in §13.
+3. ~~Board revision~~ → ✅ **Rev1 confirmed.** `IMU.begin()` succeeded via
+   `Arduino_LSM9DS1` at 119 Hz. Both sketches are correctly set to `BOARD_REV 1`.
+4. ~~Buzzer~~ → ✅ **Present and wired** (user confirmed 31 Jul). Risk R-04 closed;
+   the CW1 promise of OLED + LED + buzzer is intact.
 5. **Reference light meter** for LDR calibration — a phone lux app is acceptable if the
-   model and app are named in the deck; a real meter is better.
+   app and phone model are named in the deck; a real meter is better. 🔴
+
+---
+
+## 13. 🔴 BLOCKER — ultrasonic not reading
+
+**Measured on hardware, 31 July.** `01_sensor_check` reports `[FAIL] ECHO is stuck HIGH`
+and every distance read returns −1 (100% dropout). A timing probe confirmed the line is
+high before any trigger is sent, so each ping burns the full timeout.
+
+Everything else on the board is verified working:
+
+| Subsystem | Status | Evidence |
+|---|---|---|
+| IMU (LSM9DS1, Rev1) | ✅ | `accel sample rate 119.00 Hz`; az ≈ 0.96 g flat, pitch/roll ≈ 0 |
+| OLED SSD1306 | ✅ | `[ OK ] OLED at 0x3C` |
+| LDR on A0 | ✅ | ~330–375 of 4095 in current room light, responsive |
+| **HC-SR04** | 🔴 | ECHO stuck HIGH, 100% dropout |
+
+**Causes, in order of likelihood — work through them in this order:**
+
+1. **D2/D3 are not actually wired to TRIG/ECHO.** A floating input reads high. The pin map
+   in `docs/02-HARDWARE.md` §2 was written as the canonical target, not read off the photos.
+   Most likely fix: rewire TRIG→D2, ECHO→D3.
+2. **The module has no power** — check VCC and GND, and that grounds are common.
+3. **ECHO is at 5 V** and the pin's protection diode is clamping it. **Power down and
+   measure before doing anything else** — the nRF52840 is not 5 V tolerant.
+
+Re-run diagnostics any time by sending any character to the serial monitor while
+`01_sensor_check` is running.
+
+**Contingency if the HC-SR04 cannot be recovered:** the on-board APDS9960 proximity channel
+substitutes for distance at short range (`docs/01-ROADMAP.md` Day 0). It changes the sensor
+story but does not block the dataset — and a documented sensor substitution with a stated
+reason is perfectly respectable in the deck.
+
+---
+
+## 14. Verified environment (31 July)
+
+| Tool | Version / value |
+|---|---|
+| `arduino-cli` | 1.5.1 — `C:\Users\vishn\Downloads\arduino-cli_1.5.1_Windows_64bit\arduino-cli.exe` |
+| Core | `arduino:mbed_nano` 4.6.0 |
+| FQBN | `arduino:mbed_nano:nano33ble` |
+| Port | **COM4** |
+| Python | 3.14.5 — `C:\Users\vishn\AppData\Local\Python\pythoncore-3.14-64\python.exe` |
+| Packages | numpy, pandas, scikit-learn, scipy, matplotlib, pyserial, tabulate ✅ |
+| Libraries | Adafruit SSD1306/GFX/BusIO, Arduino_LSM9DS1, Arduino_BMI270_BMM150, Arduino_TensorFlowLite 2.4.0 ✅ |
+
+**Baseline footprint** (`01_sensor_check`, measured): **112 KB flash (11%)**, **46 KB RAM
+(17%)**, leaving ~215 KB RAM for the model and tensor arena. Quote this as the starting
+budget on the deployment slide.
+
+**Measured per-operation cost on this board** (timing probe, useful for the latency slide):
+
+| Operation | Cost |
+|---|---|
+| `digitalRead()` | ~1.5 µs |
+| `micros()` | ~9.4 µs — surprisingly expensive; avoid in tight loops |
+| `analogRead()` | ~30 µs |
+| IMU accel read | ~1.6 ms — the dominant per-sample sensor cost |
+
+### Two firmware bugs found and fixed during bring-up
+
+Both are worth a sentence in the deck: they show the platform was engineered, not assumed.
+
+1. **`pulseIn()` does not honour its timeout on the mbed core.** A missing echo stalled the
+   loop for seconds per sample, silently destroying the 10 Hz sample rate the entire data
+   protocol depends on. Replaced with a bounded manual `micros()` measurement.
+2. **The textbook I²C scanner does not work on the mbed core.** A zero-length write is never
+   put on the bus, so the scan reports nothing even when devices are present and working.
+   The authoritative checks are the explicit `IMU.begin()` / `display.begin()` results —
+   the scan output is advisory only and now says so.
 
 ---
 

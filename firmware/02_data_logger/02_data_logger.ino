@@ -42,12 +42,22 @@ const int PIN_ECHO = 3;
 Adafruit_SSD1306 display(128, 64, &Wire, -1);
 bool oledOk = false;
 
-const unsigned long SAMPLE_PERIOD_MS = 100;   // 10 Hz
-const int  ULTRA_SAMPLES   = 5;
-const int  LDR_SAMPLES     = 8;
-const long ECHO_TIMEOUT_US = 25000L;
+const unsigned long SAMPLE_PERIOD_MS = 100;   // 10 Hz nominal
+const int  ULTRA_SAMPLES = 5;
+const int  LDR_SAMPLES   = 8;
+const int  PING_GAP_MS   = 10;
 const float DIST_MIN_MM = 20.0f;
 const float DIST_MAX_MM = 4000.0f;
+
+// See 01_sensor_check for why pulseIn() is not used: the mbed core ignores its
+// timeout and a missing echo stalls the loop badly. Bounded manual timing keeps a
+// fully-failing ping cycle under ~125 ms.
+//
+// SAMPLE_PERIOD_MS is a floor, not a guarantee - when echoes are being missed the
+// loop runs slower. That is why every row carries t_ms: the true sample interval is
+// recorded in the data rather than assumed, and the analysis uses the timestamps.
+const unsigned long ECHO_START_TIMEOUT_US = 15000UL;
+const unsigned long ECHO_HIGH_MAX_US      = 25000UL;
 
 const char* CLASS_NAMES[6] = {
   "optimal", "too_close", "too_far", "underlit", "overlit", "tilt_off"
@@ -70,9 +80,15 @@ float pingOnce() {
   delayMicroseconds(10);
   digitalWrite(PIN_TRIG, LOW);
 
-  long us = pulseIn(PIN_ECHO, HIGH, ECHO_TIMEOUT_US);
-  if (us == 0) return -1.0f;
-  float mm = us * 0.1715f;                     // 343 m/s, out and back
+  unsigned long mark = micros();
+  while (digitalRead(PIN_ECHO) == LOW) {
+    if (micros() - mark > ECHO_START_TIMEOUT_US) return -1.0f;
+  }
+  unsigned long rise = micros();
+  while (digitalRead(PIN_ECHO) == HIGH) {
+    if (micros() - rise > ECHO_HIGH_MAX_US) return -1.0f;
+  }
+  float mm = (micros() - rise) * 0.1715f;      // 343 m/s, out and back
   if (mm < DIST_MIN_MM || mm > DIST_MAX_MM) return -1.0f;
   return mm;
 }
@@ -83,7 +99,7 @@ float readDistanceMm() {
   for (int i = 0; i < ULTRA_SAMPLES; i++) {
     float d = pingOnce();
     if (d > 0) v[n++] = d;
-    delay(12);
+    delay(PING_GAP_MS);
   }
   if (n == 0) return -1.0f;
   for (int i = 1; i < n; i++) {

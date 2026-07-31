@@ -58,9 +58,16 @@ bool    oledOk   = false;
 const unsigned long SAMPLE_PERIOD_MS = 100;   // 10 Hz, see docs/03-DATA-PROTOCOL.md
 const int   ULTRA_SAMPLES  = 5;               // median-of-5 rejects stray echoes
 const int   LDR_SAMPLES    = 8;               // mean-of-8 smooths ADC noise
-const long  ECHO_TIMEOUT_US = 25000L;         // ~4.3 m, well past our working range
+const int   PING_GAP_MS    = 10;              // let the previous echo die out
 const float DIST_MIN_MM    = 20.0f;
 const float DIST_MAX_MM    = 4000.0f;
+
+// Echo timing bounds. NOT using pulseIn(): the mbed core's implementation does not
+// honour its timeout argument reliably, and a missing echo stalled the loop for
+// hundreds of ms per ping - which silently destroyed the 10 Hz sample rate. The
+// manual version below is bounded at ~15 ms per failed ping.
+const unsigned long ECHO_START_TIMEOUT_US = 15000UL;  // no echo began -> ~2.5 m limit
+const unsigned long ECHO_HIGH_MAX_US      = 25000UL;  // echo stuck high -> bad reading
 
 unsigned long lastSample = 0;
 unsigned long dropouts   = 0;
@@ -68,13 +75,25 @@ unsigned long samples    = 0;
 
 // ---------------------------------------------------------------------------
 // I2C scan. Prints every address that acknowledges, with a guess at what it is.
+//
+// NOTE: the textbook scanner - beginTransmission(addr) then endTransmission() -
+// does NOT work on the mbed core. mbed's Wire only puts bytes on the bus when
+// there is a payload, so a zero-length write returns success for every address
+// and the scan reports nothing useful. Writing one dummy byte forces a real
+// transaction, and requestFrom() is used as a second opinion for read-only parts.
 // ---------------------------------------------------------------------------
+bool i2cPresent(uint8_t addr) {
+  Wire.beginTransmission(addr);
+  Wire.write((uint8_t)0x00);              // a payload, so the bus is actually driven
+  if (Wire.endTransmission() == 0) return true;
+  return Wire.requestFrom((int)addr, 1) > 0;
+}
+
 void scanI2C() {
   Serial.println(F("--- I2C scan ---"));
   int found = 0;
   for (uint8_t addr = 1; addr < 127; addr++) {
-    Wire.beginTransmission(addr);
-    if (Wire.endTransmission() == 0) {
+    if (i2cPresent(addr)) {
       found++;
       Serial.print(F("  0x"));
       if (addr < 16) Serial.print('0');
@@ -97,7 +116,12 @@ void scanI2C() {
     }
   }
   if (found == 0) {
-    Serial.println(F("  nothing answered - check SDA/SCL on A4/A5 and common ground"));
+    Serial.println(F("  nothing answered."));
+    Serial.println(F("  Do NOT trust this on its own: the mbed core's Wire returns"));
+    Serial.println(F("  unreliable status for probe transactions, and the on-board"));
+    Serial.println(F("  sensors sit on a separate internal bus, not on A4/A5. The"));
+    Serial.println(F("  authoritative checks are the IMU and OLED init lines below -"));
+    Serial.println(F("  if those report OK, the bus is fine regardless of this scan."));
   }
   Serial.println(F("----------------"));
 }
@@ -112,8 +136,18 @@ float pingOnce() {
   delayMicroseconds(10);
   digitalWrite(PIN_TRIG, LOW);
 
-  long us = pulseIn(PIN_ECHO, HIGH, ECHO_TIMEOUT_US);
-  if (us == 0) return -1.0f;                 // no echo came back
+  // Wait for the echo pulse to begin.
+  unsigned long mark = micros();
+  while (digitalRead(PIN_ECHO) == LOW) {
+    if (micros() - mark > ECHO_START_TIMEOUT_US) return -1.0f;   // nothing came back
+  }
+
+  // Time how long it stays high.
+  unsigned long rise = micros();
+  while (digitalRead(PIN_ECHO) == HIGH) {
+    if (micros() - rise > ECHO_HIGH_MAX_US) return -1.0f;        // stuck high
+  }
+  unsigned long us = micros() - rise;
 
   // 343 m/s at 20 C, out and back: mm = us * 0.343 / 2
   float mm = us * 0.1715f;
@@ -129,7 +163,7 @@ float readDistanceMm() {
   for (int i = 0; i < ULTRA_SAMPLES; i++) {
     float d = pingOnce();
     if (d > 0) v[n++] = d;
-    delay(12);                                // let the previous echo die out
+    delay(PING_GAP_MS);
   }
   if (n == 0) return -1.0f;
 
@@ -146,6 +180,39 @@ int readLdrRaw() {
   long acc = 0;
   for (int i = 0; i < LDR_SAMPLES; i++) acc += analogRead(PIN_LDR);
   return (int)(acc / LDR_SAMPLES);
+}
+
+// ---------------------------------------------------------------------------
+// ECHO health check. A healthy HC-SR04 holds ECHO LOW when idle and pulses it
+// HIGH only in response to a trigger. If it reads HIGH before we have triggered
+// anything, the pin is either floating (not wired to ECHO) or being held high by
+// something else - and every subsequent ping will burn the full timeout, quietly
+// destroying the sample rate. Catch it here and say so, loudly.
+// ---------------------------------------------------------------------------
+void checkEchoLine() {
+  Serial.println(F("--- ECHO line check ---"));
+  int highCount = 0;
+  for (int i = 0; i < 20; i++) { if (digitalRead(PIN_ECHO) == HIGH) highCount++; delay(5); }
+
+  if (highCount == 0) {
+    Serial.println(F("[ OK ] ECHO idles LOW - wiring looks correct."));
+  } else if (highCount >= 18) {
+    Serial.println(F("[FAIL] ECHO is stuck HIGH before any trigger was sent."));
+    Serial.println(F("       Distance readings will all fail and each ping will"));
+    Serial.println(F("       burn the full timeout. Most likely causes, in order:"));
+    Serial.println(F("        1. D3 is not actually wired to the module's ECHO pin"));
+    Serial.println(F("           (a floating input reads high) - check the pin map"));
+    Serial.println(F("           in docs/02-HARDWARE.md section 2."));
+    Serial.println(F("        2. The HC-SR04 has no power - check VCC and GND."));
+    Serial.println(F("        3. ECHO is at 5V and the pin's protection diode is"));
+    Serial.println(F("           clamping it. POWER DOWN AND MEASURE - the nRF52840"));
+    Serial.println(F("           is not 5V tolerant. See docs/02-HARDWARE.md sec 3."));
+  } else {
+    Serial.print(F("[WARN] ECHO is unstable ("));
+    Serial.print(highCount);
+    Serial.println(F("/20 reads high) - suspect a loose jumper."));
+  }
+  Serial.println(F("-----------------------"));
 }
 
 // ---------------------------------------------------------------------------
@@ -168,6 +235,7 @@ void setup() {
 
   Wire.begin();
   scanI2C();
+  checkEchoLine();
 
   // --- IMU ---
   if (!IMU.begin()) {
@@ -206,6 +274,16 @@ void setup() {
 
 // ---------------------------------------------------------------------------
 void loop() {
+  // Send any character to re-run the startup diagnostics. Useful because the
+  // boot-time output scrolls past before a serial monitor has finished attaching.
+  if (Serial.available()) {
+    while (Serial.available()) Serial.read();
+    Serial.println();
+    scanI2C();
+    checkEchoLine();
+    Serial.println(F("t_ms,dist_mm,ldr_raw,ax,ay,az,pitch,roll,dropout_pct"));
+  }
+
   unsigned long now = millis();
   if (now - lastSample < SAMPLE_PERIOD_MS) return;
   lastSample = now;
