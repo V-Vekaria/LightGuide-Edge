@@ -35,10 +35,12 @@ progress tracker. Start every session there.
 ## Layout
 
 ```
-firmware/01_sensor_check/   hardware bring-up + I2C scan   (compiles: 11% flash, 17% RAM)
-firmware/02_data_logger/    labelled 10 Hz CSV capture     (compiles: 11% flash, 17% RAM)
-firmware/03_inference/      on-device model + feedback     (built on day 5)
+firmware/01_sensor_check/   hardware bring-up + diagnostics (compiles: 11% flash, 17% RAM)
+firmware/01b_calibration/   LDR + ultrasonic calibration    (compiles:  9% flash, 17% RAM)
+firmware/02_data_logger/    labelled 10 Hz CSV capture      (compiles: 11% flash, 17% RAM)
+firmware/03_inference/      on-device model + feedback      (built on day 5)
 tools/capture.py            drives the logger, writes data/raw/
+tools/calibrate.py          guided sweep, curve fitting, calibration report
 tools/dataset_report.py     dataset quality gate G2
 tools/train_offline.py      M0-M3 comparison, ablation, confusion matrices
 data/                       raw/ processed/ calibration/
@@ -67,6 +69,13 @@ Watch the stream (the I²C scan at the top tells you the board revision and the 
 
 ```bash
 arduino-cli monitor -p COM4 --config baudrate=115200
+```
+
+Calibrate both sensors in one guided sweep (flash `01b_calibration` first — no lux meter
+needed, a tape measure is the reference):
+
+```bash
+python tools/calibrate.py --port COM4
 ```
 
 Capture labelled data:

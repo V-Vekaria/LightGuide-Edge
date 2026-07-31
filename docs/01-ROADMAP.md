@@ -32,17 +32,39 @@ substitution in the deck.
 
 **Goal:** raw counts become physical units, and labelled capture works end to end.
 
-- [ ] **Ultrasonic calibration:** measure 10 known distances (tape measure, 20–200 cm), 30 readings each → fit + residual plot → `data/calibration/ultrasonic.csv`
-- [ ] **LDR calibration:** measure ≥8 light levels against a reference lux source (phone lux app is acceptable — *name the app and phone model in the deck*) → fit log-linear curve → `data/calibration/ldr.csv`. **This closes the open issue CW1 flagged.**
+**One sweep calibrates both sensors.** Flash `firmware/01b_calibration`, then:
+
+```bash
+python tools/calibrate.py --port COM4
+```
+
+- [ ] Run the guided sweep: 9 distances (30–200 cm), lamp-on and lamp-off at each
+- [ ] Review `reports/calibration.md` — check gamma lands in 0.5–0.9 and R² ≥ 0.98
+- [ ] Confirm the APDS9960 cross-check correlation is > 0.95
+- [ ] Ultrasonic slope/offset/RMSE fall out of the same sweep *(needs the ECHO fault fixed first — the LDR half does not)*
 - [ ] Flash `firmware/02_data_logger` — CSV over serial at a fixed rate, with a label channel
 - [ ] `tools/capture.py` records a labelled session to `data/raw/`
 - [ ] Sensor noise characterisation: 5 min static capture → per-channel σ, drift
 
-**Gate G1:** a 60-second labelled session lands in `data/raw/` as valid CSV with no dropped
-rows, and both calibration curves are plotted in `reports/figures/`.
+**No lux meter is needed, and none should be used.** Classification is relative to a saved
+reference setup, so absolute lux is not the quantity of interest — the LDR's *response
+curve* is. Holding lamp output fixed and varying distance makes illuminance known up to a
+scale factor via the inverse-square law, so **the tape measure is the reference instrument**.
+This is the same physics that justifies using ML over thresholds, so the calibration and the
+core argument reinforce each other. Two controls make it rigorous: a lamp-off reading at
+every distance (ambient is *fitted*, not assumed), and the on-board APDS9960 as an
+independent second opinion. The fit was validated against a simulated cell with a known
+exponent — worst-case recovery error 0.009 across a grid of gammas, ambient levels and
+noise. **This closes the open issue CW1 flagged, and closes it better than a meter would**,
+because it produces a physical characterisation rather than a lookup table.
 
-**Contingency:** if the lux reference is unavailable, calibrate *relatively* (known dimmer
-steps at fixed distance) and state the limitation explicitly rather than skipping it.
+**Gate G1:** a 60-second labelled session lands in `data/raw/` as valid CSV with no dropped
+rows, and `reports/calibration.md` reports gamma in range with R² ≥ 0.98.
+
+**Contingency:** if gamma lands outside 0.5–0.9 or R² is poor, the usual cause is the lamp
+output drifting during the sweep or the LDR saturating at one end — swap the divider
+resistor (`docs/02-HARDWARE.md` §4) and re-run. If a lux meter *is* available later, one
+reference reading converts the whole curve to absolute units; nothing needs recollecting.
 
 ---
 

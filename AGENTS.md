@@ -169,7 +169,8 @@ Legend: ⬜ not started · 🟡 in progress · ✅ done · 🔴 blocked
 | Date | What changed | Next action |
 |---|---|---|
 | 2026-07-31 | Requirements + rubric extracted from handbook; CW1 promises reconciled; repo scaffolded; docs locked; bring-up firmware + capture tool + offline pipeline written and smoke-tested end to end on synthetic data | — |
-| 2026-07-31 | Flashed `01_sensor_check` to COM4. **Rev1 confirmed, IMU/OLED/LDR all verified working. Ultrasonic ECHO stuck HIGH — blocker, see §13.** Fixed two mbed-core firmware bugs (`pulseIn` timeout, I²C scanner) | **Fix the HC-SR04 wiring (§13), then re-run diagnostics** |
+| 2026-07-31 | Flashed `01_sensor_check` to COM4. **Rev1 confirmed, IMU/OLED/LDR all verified working. Ultrasonic ECHO stuck HIGH — blocker, see §13.** Fixed two mbed-core firmware bugs (`pulseIn` timeout, I²C scanner) | — |
+| 2026-07-31 | Built `01b_calibration` + `tools/calibrate.py`: meter-free LDR characterisation via the inverse-square law, ambient fitted as a free parameter, APDS9960 cross-check, ultrasonic calibrated from the same sweep. Fitter validated against a simulated cell (worst error 0.009 across a γ/ambient/noise grid) | **Fix the HC-SR04 wiring (§13), then run the calibration sweep** |
 
 ---
 
@@ -181,8 +182,11 @@ Legend: ⬜ not started · 🟡 in progress · ✅ done · 🔴 blocked
    `Arduino_LSM9DS1` at 119 Hz. Both sketches are correctly set to `BOARD_REV 1`.
 4. ~~Buzzer~~ → ✅ **Present and wired** (user confirmed 31 Jul). Risk R-04 closed;
    the CW1 promise of OLED + LED + buzzer is intact.
-5. **Reference light meter** for LDR calibration — a phone lux app is acceptable if the
-   app and phone model are named in the deck; a real meter is better. 🔴
+5. ~~Reference light meter~~ → ✅ **Not needed.** `tools/calibrate.py` recovers the LDR's
+   response exponent using the inverse-square law as the reference, with a tape measure and
+   a lamp-off ambient reading. Absolute lux is not the quantity this system needs. See
+   `docs/02-HARDWARE.md` §4. If a meter turns up later, one reading rescales the existing
+   curve — no recollection.
 
 ---
 

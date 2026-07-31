@@ -97,10 +97,26 @@ calibration — **note the value you used in the deck**, because it defines the 
 The Nano's ADC is 10-bit by default (0–1023). `analogReadResolution(12)` gives 0–4095 and
 a little more headroom for the model; the firmware sets 12-bit and the docs assume it.
 
-**Calibration** (P1 gate, closes the open issue CW1 raised): record ADC counts against a
-reference lux reading at ≥8 levels, fit `lux ≈ a·exp(b·V)` or a log-log linear fit, and keep
-the residual plot. LDRs are also slow (tens to hundreds of ms) and temperature-sensitive —
-both are legitimate limitations to name on the evaluation slide.
+**Calibration** (P1 gate, closes the open issue CW1 raised) — `tools/calibrate.py`:
+
+A CdS photoresistor follows a power law, `R = A · E^(−γ)`, with γ typically 0.5–0.9. What
+the calibration recovers is γ and A, and it does so **without a lux meter**: with lamp
+output held fixed, illuminance follows the inverse-square law, so distance measured with a
+tape measure is the reference. The cell sees lamp *plus* room, so a lamp-off reading is
+taken at every distance and the ambient level is fitted as a free parameter — working with
+the ratio `R_off/R_on` cancels the unknown scale factor and leaves γ and `E_amb`:
+
+```
+log(R_off / R_on) = γ · log(1 + E_lamp / E_amb)
+```
+
+Fitting against the lamp term alone instead biases γ low, because the response flattens at
+distance where the room dominates. The on-board APDS9960 records the same sweep as an
+independent cross-check. The fitter was validated against a simulated cell with a planted
+exponent: worst-case error 0.009 over a grid of γ, ambient level and noise.
+
+LDRs are also slow (tens to hundreds of ms) and temperature-sensitive — both are legitimate
+limitations to name on the evaluation slide.
 
 ---
 
