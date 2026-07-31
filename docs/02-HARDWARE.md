@@ -30,13 +30,18 @@ than editing the code — one canonical map keeps firmware, docs and the deck co
 | LDR divider tap | **A0** | LDR from 3V3 to A0, 10 kΩ from A0 to GND (see §4) |
 | HC-SR04 `TRIG` | **D2** | 3.3 V output — accepted by the module's trigger input |
 | HC-SR04 `ECHO` | **D3** | **via divider** — see §3 |
-| HC-SR04 `VCC` | 3V3 *or* VUSB | see §3 |
+| HC-SR04 `VCC` | **3V3** | **not VUSB** — see §3 |
 | HC-SR04 `GND` | GND | common ground |
-| OLED `SDA` | **A4** | I²C, address 0x3C (some modules 0x3D) |
+| OLED `SDA` | **A4** | I²C, **address 0x3C confirmed on hardware** |
 | OLED `SCL` | **A5** | I²C |
 | OLED `VCC` / `GND` | 3V3 / GND | most SSD1306 modules accept 3.3 V |
-| Buzzer (+) | **D9** | PWM-capable; optional |
-| IMU | internal I²C | no wiring |
+| Buzzer (+) | **D9** | PWM-capable. ⚠️ **The wiring probe found D9 floating** — the buzzer is physically on some other pin. Confirm and update this row. |
+| IMU | internal I²C | no wiring; **LSM9DS1, board is Rev1** |
+
+Verified against hardware on 31 July with `firmware/00_wiring_probe`: D2 and D3 are
+connected, D4–D12 are floating. Run that sketch any time the wiring is in doubt — it
+reports what each pin is actually attached to, and distinguishes "miswired" from
+"unpowered".
 
 ---
 
@@ -46,6 +51,12 @@ The nRF52840 is a 3.3 V part and **its GPIO is not 5 V tolerant**. A standard HC
 from 5 V drives its `ECHO` pin to 5 V. Connecting that directly to D3 can permanently damage
 the microcontroller — sometimes immediately, sometimes as a slow degradation that shows up
 later as a flaky pin, which is far worse during a 9-day project.
+
+> **DECIDED 31 July: take Option B — power the module from `3V3`.** Bring-up found the
+> module unpowered (`AGENTS.md` §13). Note that **the Nano 33 BLE's `VUSB` pin is not
+> connected to USB 5 V by default** — a solder bridge underneath the board must be closed
+> first — so wiring VCC to VUSB delivers nothing. Running from 3V3 both fixes the power
+> problem and removes the 5 V hazard entirely.
 
 **Pick one of these three. Do not skip this.**
 

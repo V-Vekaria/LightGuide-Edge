@@ -35,6 +35,7 @@ progress tracker. Start every session there.
 ## Layout
 
 ```
+firmware/00_wiring_probe/   what is connected to which pin? (no multimeter needed)
 firmware/01_sensor_check/   hardware bring-up + diagnostics (compiles: 11% flash, 17% RAM)
 firmware/01b_calibration/   LDR + ultrasonic calibration    (compiles:  9% flash, 17% RAM)
 firmware/02_data_logger/    labelled 10 Hz CSV capture      (compiles: 11% flash, 17% RAM)

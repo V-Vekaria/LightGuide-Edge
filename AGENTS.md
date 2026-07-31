@@ -12,7 +12,7 @@
 |---|---|
 | Project | **LightGuide Edge** — embedded AI lighting-setup assistant for studio photography |
 | Module | COM683 Edge & Embedded Intelligence, Ulster University |
-| Student | Vishnu Vekariya (B-number: **`TODO — fill in`**) |
+| Student | Vishnu Vekariya · **B00969091** |
 | Assessment | CW2 — Project Presentation & Demo, **60%** of module |
 | **Submission deadline** | **12:00 noon, Sunday 9 August 2026** (Blackboard) |
 | Oral defence | Week commencing 10 August 2026 — 12 min presentation + 5–10 min Q&A |
@@ -107,15 +107,15 @@ Full detail in `docs/05-EVALUATION-PLAN.md`. Non-negotiable elements:
 
 ## 7. Locked deliverables
 
-Blackboard file naming: `VekariyaVishnuB00XXXXXX_Component`
+Blackboard file naming — **exact filenames, locked**:
 
-| # | Component | Artefact | Status |
-|---|---|---|---|
-| D1 | `_Code` | `.zip`: commented Arduino sketches + Edge Impulse–exported library + Python pipeline + **public Edge Impulse project link** | ☐ |
-| D2 | `_Dataset` | `.zip`: raw + processed train/test samples, with data dictionary | ☐ |
-| D3 | `_Slides` | `.pptx` **and** `.pdf`, ~12 slides to the rubric map in `docs/06-PRESENTATION-PLAN.md` | ☐ |
-| D4 | `_Video` | ~1 min **split-screen** demo (hardware + OLED/serial response), via **Panopto** dropbox | ☐ |
-| D5 | — | 12-min oral defence + Q&A prep pack | ☐ |
+| # | Component | Filename | Artefact | Status |
+|---|---|---|---|---|
+| D1 | Code | `VekariyaVishnuB00969091_Code.zip` | commented Arduino sketches + Edge Impulse–exported library + Python pipeline + **public Edge Impulse project link** | ☐ |
+| D2 | Dataset | `VekariyaVishnuB00969091_Dataset.zip` | raw + processed train/test samples, with data dictionary | ☐ |
+| D3 | Slides | `VekariyaVishnuB00969091_Slides.pptx` / `.pdf` | ~12 slides to the rubric map in `docs/06-PRESENTATION-PLAN.md` | ☐ |
+| D4 | Video | `VekariyaVishnuB00969091_Video.mp4` | ~1 min **split-screen** demo, via the **Panopto** dropbox (not the file dropbox) | ☐ |
+| D5 | — | — | 12-min oral defence + Q&A prep pack | ☐ |
 
 Every one is compulsory; a missing component is a non-submission for that area.
 Keep the Blackboard confirmation screenshot for each.
@@ -170,18 +170,20 @@ Legend: ⬜ not started · 🟡 in progress · ✅ done · 🔴 blocked
 |---|---|---|
 | 2026-07-31 | Requirements + rubric extracted from handbook; CW1 promises reconciled; repo scaffolded; docs locked; bring-up firmware + capture tool + offline pipeline written and smoke-tested end to end on synthetic data | — |
 | 2026-07-31 | Flashed `01_sensor_check` to COM4. **Rev1 confirmed, IMU/OLED/LDR all verified working. Ultrasonic ECHO stuck HIGH — blocker, see §13.** Fixed two mbed-core firmware bugs (`pulseIn` timeout, I²C scanner) | — |
-| 2026-07-31 | Built `01b_calibration` + `tools/calibrate.py`: meter-free LDR characterisation via the inverse-square law, ambient fitted as a free parameter, APDS9960 cross-check, ultrasonic calibrated from the same sweep. Fitter validated against a simulated cell (worst error 0.009 across a γ/ambient/noise grid) | **Fix the HC-SR04 wiring (§13), then run the calibration sweep** |
+| 2026-07-31 | Built `01b_calibration` + `tools/calibrate.py`: meter-free LDR characterisation via the inverse-square law, ambient fitted as a free parameter, APDS9960 cross-check, ultrasonic calibrated from the same sweep. Fitter validated against a simulated cell (worst error 0.009 across a γ/ambient/noise grid) | — |
+| 2026-07-31 | HC-SR04 rewired by user — ECHO now idles LOW correctly, loop recovered to 128 ms. Distance still failing; built `00_wiring_probe`, which diagnosed the module as **unpowered** (D2/D3 clamped low = dead chip signature). B-number confirmed, submission filenames locked | **Move HC-SR04 VCC to the 3V3 pin (§13), re-run the probe, then the calibration sweep** |
 
 ---
 
 ## 11. Open decisions
 
-1. **B-number** — needed for every filename. → `TODO` 🔴
+1. ~~B-number~~ → ✅ **B00969091** (confirmed 31 Jul). Exact submission filenames locked in §7.
 2. ~~HC-SR04 supply voltage~~ → superseded by the live fault in §13.
 3. ~~Board revision~~ → ✅ **Rev1 confirmed.** `IMU.begin()` succeeded via
    `Arduino_LSM9DS1` at 119 Hz. Both sketches are correctly set to `BOARD_REV 1`.
-4. ~~Buzzer~~ → ✅ **Present and wired** (user confirmed 31 Jul). Risk R-04 closed;
-   the CW1 promise of OLED + LED + buzzer is intact.
+4. **Buzzer** — user confirms it is wired, but the probe shows **D9 floating**, so it is
+   not on D9. Which pin? (A0–A3/A6/A7 were not swept.) Update the pin map in
+   `docs/02-HARDWARE.md` §2 once known. 🔴
 5. ~~Reference light meter~~ → ✅ **Not needed.** `tools/calibrate.py` recovers the LDR's
    response exponent using the inverse-square law as the reference, with a tape measure and
    a lamp-off ambient reading. Absolute lux is not the quantity this system needs. See
@@ -190,11 +192,9 @@ Legend: ⬜ not started · 🟡 in progress · ✅ done · 🔴 blocked
 
 ---
 
-## 13. 🔴 BLOCKER — ultrasonic not reading
+## 13. 🔴 BLOCKER — HC-SR04 has no power
 
-**Measured on hardware, 31 July.** `01_sensor_check` reports `[FAIL] ECHO is stuck HIGH`
-and every distance read returns −1 (100% dropout). A timing probe confirmed the line is
-high before any trigger is sent, so each ping burns the full timeout.
+**Diagnosed on hardware, 31 July, via `firmware/00_wiring_probe`.**
 
 Everything else on the board is verified working:
 
@@ -202,20 +202,53 @@ Everything else on the board is verified working:
 |---|---|---|
 | IMU (LSM9DS1, Rev1) | ✅ | `accel sample rate 119.00 Hz`; az ≈ 0.96 g flat, pitch/roll ≈ 0 |
 | OLED SSD1306 | ✅ | `[ OK ] OLED at 0x3C` |
-| LDR on A0 | ✅ | ~330–375 of 4095 in current room light, responsive |
-| **HC-SR04** | 🔴 | ECHO stuck HIGH, 100% dropout |
+| LDR on A0 | ✅ | ~290–375 of 4095 in current room light, responsive |
+| **HC-SR04** | 🔴 | unpowered — see below |
+| Buzzer | ❓ | **not on D9** (probe says floating). Where is it? |
 
-**Causes, in order of likelihood — work through them in this order:**
+### The evidence
 
-1. **D2/D3 are not actually wired to TRIG/ECHO.** A floating input reads high. The pin map
-   in `docs/02-HARDWARE.md` §2 was written as the canonical target, not read off the photos.
-   Most likely fix: rewire TRIG→D2, ECHO→D3.
-2. **The module has no power** — check VCC and GND, and that grounds are common.
-3. **ECHO is at 5 V** and the pin's protection diode is clamping it. **Power down and
-   measure before doing anything else** — the nRF52840 is not 5 V tolerant.
+After rewiring, ECHO on D3 correctly idles LOW (it was stuck HIGH before), and the loop
+recovered to 128 ms from 3.7 s. But distance still returned −1 on every read, and a sweep
+of D2–D12 as candidate TRIG pins produced no echo on any pin pair.
 
-Re-run diagnostics any time by sending any character to the serial monitor while
-`01_sensor_check` is running.
+The wiring probe then gave the decisive result:
+
+```
+2,LOW,LOW,held LOW externally  <-- connected
+3,LOW,LOW,held LOW externally  <-- connected
+4..12  floating - nothing attached
+```
+
+**D2 is TRIG, which is an *input* on the HC-SR04.** A powered module presents a
+high-impedance input, so D2 should read **floating**. Both D2 and D3 being clamped to
+ground, with zero response to any trigger, is the signature of an **unpowered chip** — the
+protection structures pull a dead chip's pins to ground.
+
+So the wiring is right and the module is dead on the bench. Power, not pins.
+
+### The fix
+
+**Put the module's VCC on the `3V3` pin** and confirm its GND shares the Nano's ground rail.
+
+The likely cause is board-specific and catches people out: **on the Nano 33 BLE, the `VUSB`
+pin is NOT connected to USB 5 V by default.** A solder bridge on the underside of the board
+has to be closed to enable it. VCC on VUSB therefore delivers nothing.
+
+Running from 3V3 is also the *safe* choice — no 5 V ever reaches ECHO, so the level-shifting
+hazard in `docs/02-HARDWARE.md` §3 disappears entirely. The cost is reduced maximum range,
+which is well outside our 20–200 cm working band and is characterised during calibration
+anyway. **Take Option B in `docs/02-HARDWARE.md` §3 and close this out.**
+
+### Verifying the fix
+
+```bash
+arduino-cli upload -p COM4 --fqbn arduino:mbed_nano:nano33ble firmware/00_wiring_probe
+```
+
+D2 should flip to `floating` once the module is powered. Then re-flash `01_sensor_check`
+and confirm `[ OK ] ECHO idles LOW` plus real distances. Send any character to re-run its
+diagnostics without reflashing.
 
 **Contingency if the HC-SR04 cannot be recovered:** the on-board APDS9960 proximity channel
 substitutes for distance at short range (`docs/01-ROADMAP.md` Day 0). It changes the sensor
