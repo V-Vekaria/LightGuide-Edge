@@ -1,0 +1,23 @@
+# Build output
+build/
+*.hex
+*.bin
+*.elf
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Large generated artefacts - regenerate with tools/train_offline.py
+models/*.pkl
+
+# NOTE: data/ is deliberately NOT ignored. The dataset is the one artefact that
+# cannot be regenerated from a keyboard, and it is a required submission component.
+# Commit it. See risk R-13.

@@ -1,0 +1,15 @@
+# LightGuide Edge - Python pipeline
+# Install:  pip install -r tools/requirements.txt
+#
+# Note on TensorFlow: it is deliberately NOT required here. Offline model comparison
+# runs on scikit-learn (fast, and it installs cleanly on Python 3.14, which TF does
+# not yet). The deployable neural network is trained and quantised in Edge Impulse.
+# See docs/04-ML-PLAN.md section 5.
+
+pyserial>=3.5
+numpy>=1.26
+pandas>=2.0
+scikit-learn>=1.4
+scipy>=1.11
+matplotlib>=3.8
+tabulate>=0.9
