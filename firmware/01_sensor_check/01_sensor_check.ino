@@ -190,40 +190,60 @@ int readLdrRaw() {
 // destroying the sample rate. Catch it here and say so, loudly.
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
-// Is the LDR actually wired to A0? A1 is used as a control: it is unconnected on
-// this build, so it shows what "nothing attached" looks like right now, under the
-// same electrical noise. If A0 wanders as much as A1 does, A0 is floating too.
+// Is the LDR actually wired to A0?
+//
+// An earlier version compared A0's noise against an unconnected control pin. That
+// broke the moment the board's grounding was fixed: with a proper ground the
+// floating control went quiet too, and the test started reporting a working
+// divider as disconnected. Ambient noise is not a reliable signal.
+//
+// This version measures the pin's IMPEDANCE instead, which is a property of the
+// circuit rather than the environment. Read A0 normally, then enable the internal
+// ~13k pull-up and read again:
+//   floating pin      -> the pull-up drags it to near full scale (big jump)
+//   real divider node -> low impedance holds the voltage (little change)
 // ---------------------------------------------------------------------------
-float pinSpread(int pin) {
-  const int S = 120;
+int readAvg(int pin, int n) {
   long acc = 0;
-  int v[S];
-  for (int i = 0; i < S; i++) { v[i] = analogRead(pin); acc += v[i]; delayMicroseconds(120); }
-  float mean = acc / (float)S, sq = 0;
-  for (int i = 0; i < S; i++) sq += (v[i] - mean) * (v[i] - mean);
-  return sqrt(sq / S);
+  for (int i = 0; i < n; i++) { acc += analogRead(pin); delayMicroseconds(150); }
+  return (int)(acc / n);
 }
 
 void checkLdrConnected() {
-  float sdA0 = pinSpread(PIN_LDR);
-  float sdRef = pinSpread(A1);              // control: known unconnected
+  pinMode(PIN_LDR, INPUT);
+  delay(5);
+  int plain = readAvg(PIN_LDR, 64);
+
+  pinMode(PIN_LDR, INPUT_PULLUP);
+  delay(5);
+  int pulled = readAvg(PIN_LDR, 64);
+
+  pinMode(PIN_LDR, INPUT);
+  delay(5);
+
+  int jump = pulled - plain;
 
   Serial.println(F("--- LDR check ---"));
-  Serial.print(F("  A0 noise sd ")); Serial.print(sdA0, 1);
-  Serial.print(F("   A1 (unconnected control) sd ")); Serial.println(sdRef, 1);
+  Serial.print(F("  A0 normal ")); Serial.print(plain);
+  Serial.print(F("   with pull-up ")); Serial.print(pulled);
+  Serial.print(F("   shift ")); Serial.println(jump);
 
-  if (sdA0 > sdRef * 0.6f) {
-    Serial.println(F("[FAIL] A0 is as noisy as an unconnected pin - the LDR is"));
-    Serial.println(F("       NOT wired to A0. An analog pin always returns a"));
-    Serial.println(F("       number, so a plausible value proves nothing."));
-    Serial.println(F("       Needed: 3V3 -- LDR -- A0 -- 10k -- GND"));
-    Serial.println(F("       A0 is left side, pin 4 counting from the USB end."));
-    Serial.println(F("       Both the LDR AND the 10k resistor must be present -"));
-    Serial.println(F("       an LDR alone is a variable resistor, not a divider."));
+  if (jump > 800) {
+    Serial.println(F("[FAIL] A0 is high impedance - the internal pull-up moved it"));
+    Serial.println(F("       a long way, which only happens on a floating pin."));
+    Serial.println(F("       The LDR divider is not connected to A0."));
+    Serial.println(F("       Needed: 3V3 -- LDR -- A0 -- resistor -- GND"));
+    Serial.println(F("       Every component's two legs must sit in DIFFERENT rows."));
+  } else if (plain > 4000) {
+    Serial.println(F("[WARN] A0 is pinned at full scale. Either the LDR is shorted"));
+    Serial.println(F("       (both legs in one row) or the lower resistor does not"));
+    Serial.println(F("       reach a real ground. Light changes cannot show up."));
+  } else if (plain < 60) {
+    Serial.println(F("[WARN] A0 is pinned at zero - check the LDR leg to 3V3."));
   } else {
-    Serial.print(F("[ OK ] LDR divider looks connected (A0 is "));
-    Serial.print(sdRef / (sdA0 + 0.01f), 1);
-    Serial.println(F("x quieter than floating)."));
+    Serial.println(F("[ OK ] A0 is a low-impedance node in a sensible range."));
+    Serial.println(F("       Confirm by covering the LDR: the value must move by"));
+    Serial.println(F("       hundreds of counts, not tens."));
   }
   Serial.println(F("-----------------"));
 }

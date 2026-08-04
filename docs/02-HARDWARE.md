@@ -99,15 +99,22 @@ and it looks identical to a wiring mistake.
 | LDR leg 2 **+** resistor leg 1 | `A0` | left, 4th from USB |
 | Resistor leg 2 | − rail | — |
 
-**Use 1 kΩ, not 10 kΩ.** Measured 31 July: A0 pinned at 4091/4095 with the 10 kΩ fitted.
-A clipped channel carries no information, and `overlit` would be inseparable from
-`optimal` no matter how good the model is.
+**Use 10 kΩ.** ⚠️ A note on how this was got wrong, because it is a useful lesson: A0 was
+observed pinned at 4091/4095 with the 10 kΩ fitted, and the 10 kΩ was blamed. The real
+cause was the breadboard `−` rail sitting at 3.3 V (§13.4 of `AGENTS.md`) — the divider had
+no ground, so *no* resistor value could have worked. **A symptom was diagnosed instead of
+its cause, and a correct component was replaced.**
 
-| Value | Bands | Verdict |
+Once ground was fixed, the LDR measured ≈10.8 kΩ in normal room light, which makes 10 kΩ
+the right partner:
+
+| Pulldown | Predicted A0 in room light | Verdict |
 |---|---|---|
-| 1 kΩ | brown black red | **use this** |
-| 4.7 kΩ | yellow violet red | fallback if 1 kΩ reads too low |
-| 10 kΩ | brown black orange | saturates in this lighting |
+| 1 kΩ | ~350 counts (9% of scale) | too small — cramped at the bottom |
+| **10 kΩ** | **~1970 counts (48% of scale)** | **use this — near mid-scale, swings both ways** |
+| 4.7 kΩ | ~1050 counts | usable fallback |
+
+Bands: 10 kΩ = brown · black · orange.
 
 **Step 4 — OLED** *(demo only, not needed for the dataset)*
 
