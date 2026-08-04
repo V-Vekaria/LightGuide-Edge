@@ -125,8 +125,9 @@ measured limitation:
 
 1. **Replace the LDR with a spectrally-aware sensor** (TCS34725 / on-board APDS9960 colour
    channels) — driven by the measured error under different colour-temperature sources.
-2. **Temperature-compensate the ultrasonic** using the on-board HTS221 — driven by the
-   measured drift, if any.
+2. **Temperature-compensate the ultrasonic** using the **LPS22HB's on-chip temperature
+   channel** — driven by the measured drift, if any. (Not the HTS221: it is not fitted on
+   the Sense *Lite*. Verified by bus enumeration, `docs/02-HARDWARE.md` §1.)
 3. **Add magnetometer yaw** to close the pan blind spot named in `02-HARDWARE.md` §6.
 4. **On-device learning of the reference setup** — few-shot personalisation per studio,
    driven by the observed session-to-session gap.

@@ -171,7 +171,8 @@ Legend: ⬜ not started · 🟡 in progress · ✅ done · 🔴 blocked
 | 2026-07-31 | Requirements + rubric extracted from handbook; CW1 promises reconciled; repo scaffolded; docs locked; bring-up firmware + capture tool + offline pipeline written and smoke-tested end to end on synthetic data | — |
 | 2026-07-31 | Flashed `01_sensor_check` to COM4. **Rev1 confirmed, IMU/OLED/LDR all verified working. Ultrasonic ECHO stuck HIGH — blocker, see §13.** Fixed two mbed-core firmware bugs (`pulseIn` timeout, I²C scanner) | — |
 | 2026-07-31 | Built `01b_calibration` + `tools/calibrate.py`: meter-free LDR characterisation via the inverse-square law, ambient fitted as a free parameter, APDS9960 cross-check, ultrasonic calibrated from the same sweep. Fitter validated against a simulated cell (worst error 0.009 across a γ/ambient/noise grid) | — |
-| 2026-07-31 | HC-SR04 rewired by user — ECHO now idles LOW correctly, loop recovered to 128 ms. Distance still failing; built `00_wiring_probe`, which diagnosed the module as **unpowered** (D2/D3 clamped low = dead chip signature). B-number confirmed, submission filenames locked | **Move HC-SR04 VCC to the 3V3 pin (§13), re-run the probe, then the calibration sweep** |
+| 2026-07-31 | HC-SR04 rewired by user — ECHO now idles LOW correctly, loop recovered to 128 ms. Built `00_wiring_probe`. B-number confirmed, submission filenames locked | — |
+| 2026-07-31 | Built `00c_voltmeter` and `00d_sensor_inventory`. **Scanned `Wire1` and found the on-board sensors the earlier scan missed.** Board confirmed as Sense **Lite**: HTS221 absent, APDS9960 present and returning live data. **Measured that the LDR is not connected to A0, and retracted the false-positive OLED verification.** Pattern is unambiguous: 100% of on-board devices work, 0% of external ones do → single fault in the Nano-to-breadboard path, most likely unsoldered castellated headers (§13) | **Check the Nano's header pins are soldered and seated, then re-run `00d_sensor_inventory` and `00_wiring_probe`** |
 
 ---
 
@@ -192,7 +193,84 @@ Legend: ⬜ not started · 🟡 in progress · ✅ done · 🔴 blocked
 
 ---
 
-## 13. 🔴 BLOCKER — HC-SR04 has no power
+## 13. 🔴 BLOCKER — no electrical path between the Nano and the breadboard
+
+**Superseded diagnosis below.** The earlier "HC-SR04 unpowered" call was too narrow, and
+the "OLED verified" claim was wrong — see §13.1 for the correction.
+
+### The measured pattern (31 July)
+
+| Device | Bus / pin | Status | Evidence |
+|---|---|---|---|
+| LSM9DS1 IMU | Wire1 0x6B/0x1E | ✅ works | live accel, 119 Hz |
+| APDS9960 | Wire1 0x39 | ✅ works | live colour r=79 g=65 b=43 ambient=161 |
+| LPS22HB pressure | Wire1 0x5C | ✅ present | ACKs on bus |
+| HTS221 temp/humidity | Wire1 0x5F | ⛔ **not fitted** | absent — this is the "Lite" reduction |
+| LDR | A0 | ❌ not connected | A0 statistically identical to floating A1/A2 |
+| SSD1306 OLED | Wire (A4/A5) | ❌ not connected | nothing ACKs on the external bus |
+| HC-SR04 | D2/D3 | ❌ no response | no echo on any trigger pin |
+| LED / switch / buzzer | D2–D12 | ❌ not connected | all floating |
+
+**Every on-board device works. Zero external devices work.** That is one fault, not six.
+
+### Diagnosis
+
+The Nano 33 BLE Sense Lite ships **castellated**. If male header pins are not soldered on,
+the board rests on the breadboard and makes contact with **nothing** — jumpers sit in rows
+adjacent to the board, but no row reaches the board's pads. This explains every symptom at
+once, including why USB-powered on-board sensors are perfectly healthy.
+
+**Check first: are header pins soldered to the Nano and seated in the breadboard?**
+
+Secondary possibilities, if the headers *are* soldered:
+1. The board straddles the centre channel incorrectly, so each side's pins share rows.
+2. The breadboard's + / − rails are not jumpered to the Nano's `3V3` / `GND`.
+3. Rails are split mid-board and the jumpers feed the wrong half.
+
+### Verifying the fix
+
+`firmware/00c_voltmeter` turns the Nano into a multimeter — jumper A1 to any point and read
+the voltage. Probe in this order: the Nano's own `3V3` pin (proves the probe works), then
+the breadboard + rail, then each module's VCC. The first point that reads ~0 V instead of
+~3.3 V is where the path breaks.
+
+---
+
+## 13.1 Correction — the OLED was never verified
+
+`01_sensor_check` reported `[ OK ] OLED at 0x3C`. **That was a false positive.**
+`Adafruit_SSD1306::begin()` returns success once it has allocated its frame buffer and sent
+init commands; it does **not** check that any device acknowledged on the bus. A correct
+scan of `Wire` finds nothing on A4/A5.
+
+Two lessons worth carrying into the deck, because both are real engineering findings:
+
+1. **A library's `begin()` returning true is not evidence a device exists.** Only a
+   round-trip that reads data back proves presence. The APDS9960 check in
+   `00d_sensor_inventory` does exactly that — it reports a live colour reading, not just
+   an init result.
+2. **The on-board sensors are on `Wire1`, not `Wire`.** The Nano 33 BLE family puts its
+   internal sensors on a separate I²C bus. Scanning only `Wire` is why the first scan
+   looked empty and sent the diagnosis down the wrong path for a round.
+
+---
+
+## 13.2 Impact of the "Lite" variant
+
+Confirmed by the user and by the bus scan: this is a **Nano 33 BLE Sense Lite**.
+The **HTS221 temperature/humidity sensor is not fitted**.
+
+- `docs/02-HARDWARE.md` §6 and `docs/05-EVALUATION-PLAN.md` §5 both proposed using the
+  HTS221 to temperature-compensate the ultrasonic speed of sound. **That chip does not
+  exist on this board.** The idea survives, though: the **LPS22HB (0x5C) has an on-chip
+  temperature output**, so retarget the compensation there and say so explicitly.
+- **The APDS9960 IS present and working.** So the LDR cross-check in `tools/calibrate.py`
+  and the proximity fallback for distance both remain available. Good news for two
+  contingency plans that depended on it.
+
+---
+
+## 13.3 Original (superseded) HC-SR04 note
 
 **Diagnosed on hardware, 31 July, via `firmware/00_wiring_probe`.**
 

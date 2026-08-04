@@ -4,7 +4,7 @@
 
 | Item | Part | Role | Notes |
 |---|---|---|---|
-| MCU | **Arduino Nano 33 BLE Sense** (nRF52840, Cortex-M4F @64 MHz, 1 MB flash / 256 KB RAM, u-blox NINA-B306) | Compute + inference | 3.3 V logic, **NOT 5 V tolerant** |
+| MCU | **Arduino Nano 33 BLE Sense Lite** (nRF52840, Cortex-M4F @64 MHz, 1 MB flash / 256 KB RAM, u-blox NINA-B306) | Compute + inference | 3.3 V logic, **NOT 5 V tolerant**. Ships **castellated** — headers must be soldered on. |
 | Distance | **HC-SR04** ultrasonic | Stand-to-subject distance | See §3 — voltage hazard |
 | Brightness | **LDR** photoresistor | Incident light level | Needs a divider resistor; needs calibration |
 | Tilt | **On-board IMU** (LSM9DS1 on Rev1 / BMI270+BMM150 on Rev2) | Head/stand angle | No wiring; revision detected by firmware |
@@ -12,9 +12,19 @@
 | Status | On-board LED / RGB | State indication | Built in |
 | Alert | Piezo buzzer | Audible warning | **Not present in the current build** — see `AGENTS.md` §11.4 |
 
-The Nano 33 BLE Sense also carries an **APDS9960** (ambient light, RGB, proximity), an
-HTS221, an LPS22HB and a microphone. The APDS9960 is our fallback distance channel and a
-useful cross-check for the LDR — worth mentioning in the deck as a design consideration
+**On-board sensors — enumerated from the hardware, not the datasheet** (`firmware/00d_sensor_inventory`,
+31 July). They sit on the internal I²C bus `Wire1`, **not** on A4/A5:
+
+| Address | Device | Present? |
+|---|---|---|
+| 0x6B / 0x1E | LSM9DS1 accel+gyro / magnetometer | ✅ |
+| 0x39 | APDS9960 ambient light, RGB, proximity | ✅ live data confirmed |
+| 0x5C | LPS22HB pressure **+ on-chip temperature** | ✅ |
+| 0x5F | HTS221 temperature/humidity | ⛔ **not fitted on the Lite** |
+
+Because the HTS221 is absent, any ultrasonic temperature compensation must take its
+reading from the **LPS22HB's** temperature channel instead. The APDS9960 *is* present, so
+it remains available both as the LDR cross-check and as the fallback distance channel — worth mentioning in the deck as a design consideration
 (why an external LDR at all? because it can be positioned at the subject plane, where the
 light actually lands, rather than at the device).
 
@@ -152,8 +162,9 @@ calibration step on Day 1 is what turns one into the other, and it is worth mark
 - **HC-SR04 beam angle is ~15°** and it returns the *nearest* echo in that cone — it measures
   "something in front", not specifically the subject. Soft or angled surfaces absorb or
   deflect the pulse.
-- **Ultrasonic speed of sound varies with temperature** (~0.6 m/s per °C). The on-board
-  HTS221 could compensate; whether we do is a design decision worth stating either way.
+- **Ultrasonic speed of sound varies with temperature** (~0.6 m/s per °C). The **LPS22HB's
+  on-chip temperature channel** can compensate — *not* the HTS221, which is not fitted on
+  the Lite variant. Whether we compensate is a design decision worth stating either way.
 - **LDR is uncalibrated, slow, and spectrally non-flat** — it responds differently to
   tungsten, LED and daylight-balanced sources at the same lux. This is a genuine limitation
   of the sensor choice and a good future-work item (a TCS34725 or the on-board APDS9960
