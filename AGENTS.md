@@ -149,7 +149,7 @@ Update the status column at the end of every working session. Do not delete rows
 |---|---|---|---|
 | P0 Setup | Repo scaffolded, docs locked, board flashes and prints all 3 sensors | 31 Jul | ✅ **all three sensor channels working** |
 | P0.1 Hardware | HC-SR04, LDR, OLED, IMU verified; pin map confirmed | 31 Jul | ✅ **done** — root cause was the `−` rail at 3.3 V (§13.4) |
-| P0.2 Feedback devices | Buzzer, external LED, switch verified | 31 Jul | 🟡 wired, awaiting `01d_output_test` |
+| P0.2 Feedback devices | Buzzer, external LED, switch verified | 31 Jul | 🟡 buzzer ✅ · LED ✅ (D8) · switch outstanding (optional) |
 | P1 Calibration | LDR→lux curve + ultrasonic→cm curve recorded against references | 1 Aug | ⬜ |
 | P2 Logger | Labelled CSV capture over serial working end-to-end | 1 Aug | ⬜ |
 | P3 Dataset | ≥250 samples/class × 6 classes, ≥3 sessions, held-out session reserved | 2 Aug | ⬜ |
@@ -173,6 +173,7 @@ Legend: ⬜ not started · 🟡 in progress · ✅ done · 🔴 blocked
 | 2026-07-31 | Flashed `01_sensor_check` to COM4. **Rev1 confirmed, IMU/OLED/LDR all verified working. Ultrasonic ECHO stuck HIGH — blocker, see §13.** Fixed two mbed-core firmware bugs (`pulseIn` timeout, I²C scanner) | — |
 | 2026-07-31 | Built `01b_calibration` + `tools/calibrate.py`: meter-free LDR characterisation via the inverse-square law, ambient fitted as a free parameter, APDS9960 cross-check, ultrasonic calibrated from the same sweep. Fitter validated against a simulated cell (worst error 0.009 across a γ/ambient/noise grid) | — |
 | 2026-07-31 | HC-SR04 rewired by user — ECHO now idles LOW correctly, loop recovered to 128 ms. Built `00_wiring_probe`. B-number confirmed, submission filenames locked | — |
+| 2026-07-31 | **Bring-up complete except the switch.** HC-SR04 (0% dropouts, 10 Hz), IMU, OLED (0x3C), LDR divider, buzzer (D9) and external LED (D8) all verified on hardware. Root cause of the long OLED/LDR hunt was the breadboard `−` rail sitting at 3.3 V (§13.4). Switch still not completing to ground — optional, does not gate anything | **Fix the ground rail, then run `tools/calibrate.py`** |
 | 2026-07-31 | Built `00c_voltmeter` and `00d_sensor_inventory`. **Scanned `Wire1` and found the on-board sensors the earlier scan missed.** Board confirmed as Sense **Lite**: HTS221 absent, APDS9960 present and returning live data. **Measured that the LDR is not connected to A0, and retracted the false-positive OLED verification.** Pattern is unambiguous: 100% of on-board devices work, 0% of external ones do → single fault in the Nano-to-breadboard path, most likely unsoldered castellated headers (§13) | **Check the Nano's header pins are soldered and seated, then re-run `00d_sensor_inventory` and `00_wiring_probe`** |
 
 ---
