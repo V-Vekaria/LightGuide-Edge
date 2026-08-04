@@ -194,9 +194,9 @@ on-board RGB LED is **active LOW** on this board: `digitalWrite(LEDR, LOW)` turn
 | OLED `SDA` | **A4** | I²C, **address 0x3C confirmed on hardware** |
 | OLED `SCL` | **A5** | I²C |
 | OLED `VCC` / `GND` | 3V3 / GND | most SSD1306 modules accept 3.3 V |
-| Buzzer (+) | **D9** | right side, position 4 |
-| External LED | **D8** | right side, position 5, via 220 Ω |
-| Switch | **D7** | right side, position 6, to GND, `INPUT_PULLUP` |
+| Buzzer (+) | **D9** ✅ | right side, position 4 |
+| External LED | **D8** ✅ | right side, position 5, via 220 Ω |
+| Switch | **D7** ✅ | right side, position 6, to GND, `INPUT_PULLUP` |
 | Status LED | **on-board RGB** | `LEDR`/`LEDG`/`LEDB`, **no wiring**, active LOW |
 | IMU | internal I²C | no wiring; **LSM9DS1, board is Rev1** |
 
