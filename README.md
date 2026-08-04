@@ -13,6 +13,7 @@ Nano 33 BLE Sense, and tells the photographer what to adjust.
 
 ## Read this first
 
+**[`RUN.md`](RUN.md)** — *"which file do I actually run?"* Every command, in order.
 **[`AGENTS.md`](AGENTS.md)** — the contract. Locked aims, scope, deliverables, and the
 progress tracker. Start every session there.
 
