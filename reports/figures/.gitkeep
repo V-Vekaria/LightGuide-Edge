@@ -1,0 +1,5 @@
+﻿# This folder is intentionally empty for now.
+#
+# Charts and plots. Filled Sun 3 Aug by train_offline.py / calibrate.py:
+  confusion_*.png, class_balance.png, calibration_ldr.png, decision_tree.png
+
