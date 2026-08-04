@@ -66,6 +66,66 @@ Two things worth knowing from this layout:
 - **`3V3` is left-side position 2**, right next to the USB end — an easy pin to miscount to,
   because position 1 (D13) is immediately above it.
 
+### 2.0b Full build sheet — rails first
+
+Wire the power rails before anything else, then every module takes power from the rails
+instead of competing for the Nano's single 3V3 and GND pins.
+
+**Step 1 — rails**
+
+| Wire | From | To |
+|---|---|---|
+| Red | `3V3` (left, pos 2) | breadboard **+ rail** |
+| Black | `GND` (right, pos 12) | breadboard **− rail** |
+
+⚠️ Breadboard rails are frequently **split at the midpoint**. Bridge both halves of each
+rail if modules are spread along the board — a jumper landing in the unfed half is dead,
+and it looks identical to a wiring mistake.
+
+**Step 2 — HC-SR04** ✅ *verified working 31 July, 0% dropouts*
+
+| Wire | To | Position |
+|---|---|---|
+| `VCC` | + rail | — |
+| `GND` | − rail | — |
+| `TRIG` | `D2` | right, 11th from USB |
+| `ECHO` | `D3` | right, 10th from USB |
+
+**Step 3 — LDR divider**
+
+| Wire | To | Position |
+|---|---|---|
+| LDR leg 1 | + rail | — |
+| LDR leg 2 **+** resistor leg 1 | `A0` | left, 4th from USB |
+| Resistor leg 2 | − rail | — |
+
+**Use 1 kΩ, not 10 kΩ.** Measured 31 July: A0 pinned at 4091/4095 with the 10 kΩ fitted.
+A clipped channel carries no information, and `overlit` would be inseparable from
+`optimal` no matter how good the model is.
+
+| Value | Bands | Verdict |
+|---|---|---|
+| 1 kΩ | brown black red | **use this** |
+| 4.7 kΩ | yellow violet red | fallback if 1 kΩ reads too low |
+| 10 kΩ | brown black orange | saturates in this lighting |
+
+**Step 4 — OLED** *(demo only, not needed for the dataset)*
+
+| Wire | To | Position |
+|---|---|---|
+| `VCC` | + rail | — |
+| `GND` | − rail | — |
+| `SDA` | `A4` | left, 8th from USB |
+| `SCL` | `A5` | left, 9th from USB |
+
+⚠️ SSD1306 modules ship with **different pin orders** — `GND VCC SCL SDA` or
+`VCC GND SCL SDA`. Read the silkscreen; reversing VCC and GND can destroy the module.
+
+**Step 5 — buzzer** *(optional)*: `+` → `D9` (right, 4th from USB), `−` → − rail.
+
+**Step 6 — LED: do not wire one.** The on-board RGB LED is verified working and needs no
+connections. External LED and its resistor are removed from the build.
+
 ### 2.1 Minimum wiring to start collecting data
 
 Given the deadline, wire this much **first** and start the dataset. Only the ultrasonic and
