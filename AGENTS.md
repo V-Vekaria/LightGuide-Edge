@@ -17,6 +17,7 @@
 | **Submission deadline** | **12:00 noon, Sunday 9 August 2026** (Blackboard) |
 | Oral defence | Week commencing 10 August 2026 — 12 min presentation + 5–10 min Q&A |
 | Working days remaining at lock | **9** (locked 31 July 2026) |
+| Repository | **https://github.com/V-Vekaria/LightGuide-Edge** — ⚠️ **PRIVATE**. Keep it private until after grading (31 Jul 2026): a public repo of in-progress coursework invites copying, and Ulster's misconduct process is uncomfortable for the original author too. |
 | Target band | **1st (70–79%)** minimum on every rubric row; **High 1st (80–100%)** on ML, Evaluation and Demo |
 
 ---

@@ -1,5 +1,9 @@
 # What do I run?
 
+> **Repo:** https://github.com/V-Vekaria/LightGuide-Edge (private)
+> Push after each phase gate so work is never trapped on one machine:
+> `git add -A && git commit -m "..." && git push`
+
 Two kinds of thing live in this repo:
 
 - **`firmware/*`** — Arduino sketches. These get *flashed to the board*. Only one can be on
