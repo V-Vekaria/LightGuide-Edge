@@ -12,13 +12,47 @@ scores in the 80s. Drill the extension habit, not just the facts.
 
 ## 1. Questions you will almost certainly be asked
 
-**"Why machine learning? Couldn't you do this with three if-statements?"**
-The strongest question in the set — have this one word-perfect. Distance and brightness are
-physically coupled through the inverse-square law: illuminance falls with the square of
-distance, so moving the light further away *and* turning it up can leave the light reading
-unchanged while the setup is wrong. Independent per-sensor thresholds cannot resolve that;
-they need the joint distribution. *Then extend:* "and the M0 baseline quantifies this — a
-threshold rule scored X, the MLP scored Y on the same held-out session."
+**"Why machine learning? The device already stores the reference setup — why not just
+subtract and report the difference?"**
+
+**The single most likely question in the whole viva.** Any marker looking at three sensors
+and a saved reference will ask it. Answer in this order — concede first, then build.
+
+*Concede the strong version.* For a bare lamp in one room with no modifier, reference
+subtraction works nearly as well. Even the obvious coupling is solvable analytically:
+illuminance ∝ 1/d², so `k = lux × d²` isolates whether the lamp's *output* changed
+independently of its position. No ML needed for that case. **Say this out loud** — it shows
+the alternative was actually considered rather than dismissed.
+
+*Then give the four reasons it breaks:*
+
+1. **The inverse-square law does not hold for real modifiers.** 1/d² describes a *point*
+   source. A softbox or umbrella is an **extended area source**: at close range its falloff
+   approaches 1/d, and the transition depends on the modifier's physical size. No clean
+   closed form, and it differs per modifier. A model learned from the actual equipment
+   captures the true relationship without deriving it. **This is the strongest single point.**
+2. **Tilt couples into brightness.** Illuminance scales with the cosine of incidence angle,
+   so tilt changes the light reading even when nothing moved and nothing dimmed. Three
+   entangled variables, not two.
+3. **The LDR is not a lux meter.** Power-law response (γ ≈ 0.7, measured — see
+   `reports/calibration.md`), temperature-sensitive, spectrally non-flat: tungsten and LED
+   at equal lux read differently. An analytical model needs all of that characterised.
+4. **Thresholds do not generalise.** Bands tuned in one room drift with ambient, lamp and
+   mounting. Hence three physically distinct sessions and a held-out test session.
+
+*Then the point thresholds cannot touch:* a stored reference can only report a delta from
+the reference. It **cannot report that the reading is meaningless**. Someone steps in front
+of the sensor, the stand is knocked, the lamp is off — a threshold system confidently
+reports "distance 200% high" and is useless. The autoencoder (M2), trained only on valid
+setups, flags `UNKNOWN SETUP`. That is unsupervised learning doing something reference
+subtraction structurally cannot, and it is the difference between a tool trusted on a paid
+shoot and one that gets switched off.
+
+*Then close with evidence, not assertion:* "M0 includes a hand-tuned threshold rule
+evaluated on the same held-out session — it scored X, the MLP scored Y." **If the threshold
+rule wins, report that.** The rubric asks you to compare methodological approaches, not to
+conclude the most complex one won. An honest negative result scores better than a defended
+one.
 
 **"Why did you split by session instead of randomly?"**
 At 10 Hz, consecutive samples are near-duplicates. A random split places near-identical rows
