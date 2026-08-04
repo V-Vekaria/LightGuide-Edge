@@ -19,6 +19,15 @@
  * a live CMOS input is high impedance. If a pin you believe is an input reads
  * "held LOW", suspect power before suspecting the wiring.
  *
+ * KNOWN FALSE POSITIVE in the trigger-pair search: floating pins capacitively pick
+ * up the edge from any nearby driven pin, so a floating pin can appear to "respond"
+ * to every trigger candidate. A genuine echo responds to ONE trigger pin only. If a
+ * pin reacts to all of them, it is crosstalk on a floating input - ignore it.
+ *
+ * This probe also cannot see an LED, buzzer or switch reliably. Use
+ * 00b_pin_identify for those: it drives pins actively and asks the operator what
+ * lit up, sounded, or changed.
+ *
  * Two jobs:
  *  1. Characterise every digital pin by reading it with the internal pull-up and
  *     then the pull-down. The pair of results says what the pin is connected to:
