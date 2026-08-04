@@ -35,6 +35,58 @@ light actually lands, rather than at the device).
 Wire the build to match this. If the current wiring differs, **rewire to this map** rather
 than editing the code — one canonical map keeps firmware, docs and the deck consistent.
 
+### 2.0 Physical pin positions — count, don't guess
+
+Pin *names* are not printed on the top of the board, so counting position from the USB end
+is the reliable way to find a pin. Position 1 is the pin nearest the USB connector.
+Identical across the whole Nano 33 BLE family.
+
+| Pos | LEFT side (USB at top) | | Pos | RIGHT side |
+|---|---|---|---|---|
+| 1 | D13 | | 1 | D12 |
+| **2** | **3V3 ← power for everything** | | 2 | D11 |
+| 3 | AREF | | 3 | D10 |
+| **4** | **A0 ← LDR tap** | | **4** | **D9 ← buzzer** |
+| 5 | A1 | | 5 | D8 |
+| 6 | A2 | | 6 | D7 |
+| 7 | A3 | | 7 | D6 |
+| **8** | **A4 ← OLED SDA** | | 8 | D5 |
+| **9** | **A5 ← OLED SCL** | | 9 | D4 |
+| 10 | A6 | | **10** | **D3 ← HC-SR04 ECHO** |
+| 11 | A7 | | **11** | **D2 ← HC-SR04 TRIG** |
+| 12 | 5V ⚠️ see §3 | | **12** | **GND ← nearest ground** |
+| 13 | RESET | | 13 | RESET |
+| **14** | **GND** | | 14 | D1/RX |
+| 15 | VIN | | 15 | D0/TX |
+
+Two things worth knowing from this layout:
+
+- **`GND` at right-side position 12 sits directly below D2/D3**, so the HC-SR04's ground is
+  a one-row jump from its signal pins. Use that one, not the left-side GND.
+- **`3V3` is left-side position 2**, right next to the USB end — an easy pin to miscount to,
+  because position 1 (D13) is immediately above it.
+
+### 2.1 Minimum wiring to start collecting data
+
+Given the deadline, wire this much **first** and start the dataset. Only the ultrasonic and
+the LDR feed the model; the OLED, buzzer and switch are output devices needed for the Day-5
+demo, not for the Day-2 dataset. Seven connections unblock the critical path:
+
+| From | To |
+|---|---|
+| HC-SR04 `VCC` | `3V3` (left, pos 2) |
+| HC-SR04 `GND` | `GND` (right, pos 12) |
+| HC-SR04 `TRIG` | `D2` (right, pos 11) |
+| HC-SR04 `ECHO` | `D3` (right, pos 10) |
+| LDR leg 1 | `3V3` |
+| LDR leg 2 + 10 kΩ | `A0` (left, pos 4) |
+| 10 kΩ other leg | `GND` |
+
+**Use the on-board RGB LED instead of an external one.** `LEDR`/`LEDG`/`LEDB` are on
+P0.24/P0.16/P0.06 and need no wiring at all — the external LED and its resistor can come
+out of the build entirely. Every connection deleted is one that cannot fail. (Note the
+on-board RGB LED is **active LOW** on this board: `digitalWrite(LEDR, LOW)` turns red *on*.)
+
 | Signal | Nano pin | Notes |
 |---|---|---|
 | LDR divider tap | **A0** | LDR from 3V3 to A0, 10 kΩ from A0 to GND (see §4) |
@@ -45,7 +97,8 @@ than editing the code — one canonical map keeps firmware, docs and the deck co
 | OLED `SDA` | **A4** | I²C, **address 0x3C confirmed on hardware** |
 | OLED `SCL` | **A5** | I²C |
 | OLED `VCC` / `GND` | 3V3 / GND | most SSD1306 modules accept 3.3 V |
-| Buzzer (+) | **D9** | PWM-capable. ⚠️ **The wiring probe found D9 floating** — the buzzer is physically on some other pin. Confirm and update this row. |
+| Buzzer (+) | **D9** | right side, position 4. ⚠️ probe found D9 floating — confirm |
+| Status LED | **on-board RGB** | `LEDR`/`LEDG`/`LEDB`, **no wiring**. Active LOW. External LED deleted from the build. |
 | IMU | internal I²C | no wiring; **LSM9DS1, board is Rev1** |
 
 Verified against hardware on 31 July with `firmware/00_wiring_probe`: D2 and D3 are
