@@ -189,6 +189,45 @@ int readLdrRaw() {
 // something else - and every subsequent ping will burn the full timeout, quietly
 // destroying the sample rate. Catch it here and say so, loudly.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Is the LDR actually wired to A0? A1 is used as a control: it is unconnected on
+// this build, so it shows what "nothing attached" looks like right now, under the
+// same electrical noise. If A0 wanders as much as A1 does, A0 is floating too.
+// ---------------------------------------------------------------------------
+float pinSpread(int pin) {
+  const int S = 120;
+  long acc = 0;
+  int v[S];
+  for (int i = 0; i < S; i++) { v[i] = analogRead(pin); acc += v[i]; delayMicroseconds(120); }
+  float mean = acc / (float)S, sq = 0;
+  for (int i = 0; i < S; i++) sq += (v[i] - mean) * (v[i] - mean);
+  return sqrt(sq / S);
+}
+
+void checkLdrConnected() {
+  float sdA0 = pinSpread(PIN_LDR);
+  float sdRef = pinSpread(A1);              // control: known unconnected
+
+  Serial.println(F("--- LDR check ---"));
+  Serial.print(F("  A0 noise sd ")); Serial.print(sdA0, 1);
+  Serial.print(F("   A1 (unconnected control) sd ")); Serial.println(sdRef, 1);
+
+  if (sdA0 > sdRef * 0.6f) {
+    Serial.println(F("[FAIL] A0 is as noisy as an unconnected pin - the LDR is"));
+    Serial.println(F("       NOT wired to A0. An analog pin always returns a"));
+    Serial.println(F("       number, so a plausible value proves nothing."));
+    Serial.println(F("       Needed: 3V3 -- LDR -- A0 -- 10k -- GND"));
+    Serial.println(F("       A0 is left side, pin 4 counting from the USB end."));
+    Serial.println(F("       Both the LDR AND the 10k resistor must be present -"));
+    Serial.println(F("       an LDR alone is a variable resistor, not a divider."));
+  } else {
+    Serial.print(F("[ OK ] LDR divider looks connected (A0 is "));
+    Serial.print(sdRef / (sdA0 + 0.01f), 1);
+    Serial.println(F("x quieter than floating)."));
+  }
+  Serial.println(F("-----------------"));
+}
+
 void checkEchoLine() {
   Serial.println(F("--- ECHO line check ---"));
   int highCount = 0;
@@ -247,11 +286,32 @@ void setup() {
     Serial.println(F(" Hz"));
   }
 
+  // --- LDR presence ---
+  // An analog pin always returns a number, so "A0 gave a plausible reading" proves
+  // nothing. A disconnected pin floats around mid-scale and WANDERS; a real resistive
+  // divider is low impedance and sits steady. Compare A0's spread against a pin known
+  // to be unconnected and let the difference decide.
+  checkLdrConnected();
+
   // --- OLED ---
-  if (oledAddr == 0x00) oledAddr = 0x3C;      // scan found nothing, try the common one
-  if (display.begin(SSD1306_SWITCHCAPVCC, oledAddr)) {
+  // Verify the device ACKs on the bus BEFORE trusting begin(). Adafruit_SSD1306's
+  // begin() returns true once it has allocated its buffer and pushed init commands
+  // out - it never checks that anything answered. Calling it alone reports a healthy
+  // display on an empty bus, which cost real debugging time on this project.
+  bool acked = i2cPresent(0x3C) || i2cPresent(0x3D);
+  if (!acked) {
+    Serial.println(F("[FAIL] No I2C device acknowledged at 0x3C or 0x3D on A4/A5."));
+    Serial.println(F("       The OLED is not connected (or not powered)."));
+    Serial.println(F("       Check: SDA->A4 (left side, pin 8 from USB)"));
+    Serial.println(F("              SCL->A5 (left side, pin 9 from USB)"));
+    Serial.println(F("              VCC->3V3, GND->GND"));
+    Serial.println(F("       NOTE: SSD1306 modules vary in pin ORDER - read the"));
+    Serial.println(F("       silkscreen. Swapping VCC and GND can kill the module."));
+  }
+  if (oledAddr == 0x00) oledAddr = 0x3C;
+  if (acked && display.begin(SSD1306_SWITCHCAPVCC, oledAddr)) {
     oledOk = true;
-    Serial.print(F("[ OK ] OLED at 0x")); Serial.println(oledAddr, HEX);
+    Serial.print(F("[ OK ] OLED verified at 0x")); Serial.println(oledAddr, HEX);
     display.clearDisplay();
     display.setTextColor(SSD1306_WHITE);
     display.setTextSize(1);
@@ -259,8 +319,8 @@ void setup() {
     display.println(F("LightGuide Edge"));
     display.println(F("sensor check"));
     display.display();
-  } else {
-    Serial.println(F("[FAIL] OLED did not start - check A4/A5 and the address above."));
+  } else if (acked) {
+    Serial.println(F("[FAIL] Device ACKed but the display driver refused to start."));
   }
 
   Serial.println();
