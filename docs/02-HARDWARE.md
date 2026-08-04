@@ -134,10 +134,34 @@ pin to A4 and the 4th to A5 swaps the bus and the display never answers.
 VCC and GND has no potential difference across it and cannot power up — the same fault
 plausibly explains both the dead OLED and the dead LDR divider.
 
-**Step 5 — buzzer** *(optional)*: `+` → `D9` (right, 4th from USB), `−` → − rail.
+**Step 5 — buzzer, LED and switch** *(the feedback loop; needed for the Day-5 demo)*
 
-**Step 6 — LED: do not wire one.** The on-board RGB LED is verified working and needs no
-connections. External LED and its resistor are removed from the build.
+These three sit on adjacent pins, so they form a tidy block on the right-hand side.
+
+| Component | Connection | Pin | Position |
+|---|---|---|---|
+| Buzzer `+` | direct | `D9` | right, 4th from USB |
+| Buzzer `−` | direct | `GND` | right, 12th |
+| LED anode (**long leg**) | via **220 Ω** | `D8` | right, 5th from USB |
+| LED cathode (short leg, flat notch) | direct | `GND` | — |
+| Switch leg 1 | direct | `D7` | right, 6th from USB |
+| Switch leg 2 (**diagonal**) | direct | `GND` | — |
+
+- **The LED must have its 220 Ω** (red · red · brown). Direct to a GPIO it draws too much
+  current and can damage the pin.
+- **The switch needs no resistor** — firmware uses `INPUT_PULLUP`, so the switch simply
+  shorts D7 to ground. This also avoids a floating input, which would trigger at random.
+  On a 4-pin tactile switch the pins are internally paired; use **diagonally opposite**
+  corners and the pairing cannot be got wrong.
+- The **on-board RGB LED** (`LEDR`/`LEDG`/`LEDB`, active LOW) remains available with no
+  wiring as a second status channel, and is used alongside the external LED.
+
+Verify with `firmware/01d_output_test`, which blinks the LED, fades it via PWM, sounds the
+buzzer at three frequencies, and reports debounced switch presses.
+
+⚠️ **Do not name a variable `PIN_LED`** in any sketch — the board core already defines it as
+`(13u)`, and the collision produces a confusing "expected unqualified-id" error pointing at
+the core's own header rather than your code. Use `PIN_EXT_LED`.
 
 ### 2.1 Minimum wiring to start collecting data
 
@@ -170,8 +194,10 @@ on-board RGB LED is **active LOW** on this board: `digitalWrite(LEDR, LOW)` turn
 | OLED `SDA` | **A4** | I²C, **address 0x3C confirmed on hardware** |
 | OLED `SCL` | **A5** | I²C |
 | OLED `VCC` / `GND` | 3V3 / GND | most SSD1306 modules accept 3.3 V |
-| Buzzer (+) | **D9** | right side, position 4. ⚠️ probe found D9 floating — confirm |
-| Status LED | **on-board RGB** | `LEDR`/`LEDG`/`LEDB`, **no wiring**. Active LOW. External LED deleted from the build. |
+| Buzzer (+) | **D9** | right side, position 4 |
+| External LED | **D8** | right side, position 5, via 220 Ω |
+| Switch | **D7** | right side, position 6, to GND, `INPUT_PULLUP` |
+| Status LED | **on-board RGB** | `LEDR`/`LEDG`/`LEDB`, **no wiring**, active LOW |
 | IMU | internal I²C | no wiring; **LSM9DS1, board is Rev1** |
 
 Verified against hardware on 31 July with `firmware/00_wiring_probe`: D2 and D3 are

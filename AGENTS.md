@@ -147,8 +147,9 @@ Update the status column at the end of every working session. Do not delete rows
 
 | Phase | Gate (must be true to pass) | Target date | Status |
 |---|---|---|---|
-| P0 Setup | Repo scaffolded, docs locked, board flashes and prints all 3 sensors | 31 Jul | 🟡 IMU + LDR + OLED verified; ultrasonic failing |
-| P0.1 Hardware safety | HC-SR04 ECHO level-shift verified; IMU revision identified; pin map confirmed | 31 Jul | 🔴 **ECHO stuck HIGH — see §13** |
+| P0 Setup | Repo scaffolded, docs locked, board flashes and prints all 3 sensors | 31 Jul | ✅ **all three sensor channels working** |
+| P0.1 Hardware | HC-SR04, LDR, OLED, IMU verified; pin map confirmed | 31 Jul | ✅ **done** — root cause was the `−` rail at 3.3 V (§13.4) |
+| P0.2 Feedback devices | Buzzer, external LED, switch verified | 31 Jul | 🟡 wired, awaiting `01d_output_test` |
 | P1 Calibration | LDR→lux curve + ultrasonic→cm curve recorded against references | 1 Aug | ⬜ |
 | P2 Logger | Labelled CSV capture over serial working end-to-end | 1 Aug | ⬜ |
 | P3 Dataset | ≥250 samples/class × 6 classes, ≥3 sessions, held-out session reserved | 2 Aug | ⬜ |
