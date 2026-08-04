@@ -111,15 +111,21 @@ A clipped channel carries no information, and `overlit` would be inseparable fro
 
 **Step 4 — OLED** *(demo only, not needed for the dataset)*
 
-| Wire | To | Position |
-|---|---|---|
-| `VCC` | + rail | — |
-| `GND` | − rail | — |
-| `SDA` | `A4` | left, 8th from USB |
-| `SCL` | `A5` | left, 9th from USB |
+**This module's silkscreen order, read off the hardware 31 July: `VCC · GND · SCL · SDA`.**
+Note **SCL comes before SDA** — the reverse of what most tutorials assume. Wiring the 3rd
+pin to A4 and the 4th to A5 swaps the bus and the display never answers.
 
-⚠️ SSD1306 modules ship with **different pin orders** — `GND VCC SCL SDA` or
-`VCC GND SCL SDA`. Read the silkscreen; reversing VCC and GND can destroy the module.
+| Module pin | Position on header | To | Nano position |
+|---|---|---|---|
+| `VCC` | 1st | `3V3` | left, 2nd from USB |
+| `GND` | 2nd | `GND` | right, 12th from USB |
+| `SCL` | 3rd | **`A5`** | left, 9th from USB |
+| `SDA` | 4th | **`A4`** | left, 8th from USB |
+
+⚠️ **Wire these directly to Nano pins, not via the breadboard rails.** On 31 July the
+`−` rail measured **3.30 V, not ground** (`AGENTS.md` §13.4). A module with 3.3 V on both
+VCC and GND has no potential difference across it and cannot power up — the same fault
+plausibly explains both the dead OLED and the dead LDR divider.
 
 **Step 5 — buzzer** *(optional)*: `+` → `D9` (right, 4th from USB), `−` → − rail.
 

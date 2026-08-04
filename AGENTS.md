@@ -236,6 +236,35 @@ the breadboard + rail, then each module's VCC. The first point that reads ~0 V i
 
 ---
 
+## 13.4 The breadboard `−` rail is at 3.3 V, not ground
+
+**Measured 31 July** with `00c_voltmeter` / the A0 probe: the rail being used as ground
+reads **3.30 V**. It is tied to 3V3, not to GND.
+
+This is a single fault that plausibly explains **both** remaining failures:
+
+- **LDR divider dead.** The "pulldown" resistor runs from A0 to a 3.3 V rail, so A0 is held
+  at supply from both sides. Nothing divides, and light level cannot affect the reading —
+  observed as A0 pinned at 4080–4095 with a 15-count swing while covered.
+- **OLED dead.** With `GND` on that rail, the module sees 3.3 V on both VCC and GND. No
+  potential difference, no power, no ACK on the bus.
+
+**Fix: wire external modules directly to the Nano's own `3V3` and `GND` pins and bypass the
+rails entirely** until the rails are re-jumpered and re-verified. Fewer contacts, and it
+removes the failing element from the circuit rather than debugging around it.
+
+Secondary suspicion for the LDR, still unconfirmed: **its two legs may be in the same
+breadboard row**, which shorts it out (holes a–e of one numbered row are common). A shorted
+LDR ties A0 straight to the + rail and produces exactly the observed rock-steady 3.30 V,
+independent of light. Every component must have its two legs in *different* numbered rows.
+
+## 13.5 OLED module pin order — read off the hardware
+
+This module's silkscreen: **`VCC · GND · SCL · SDA`**. **SCL is 3rd, SDA is 4th** — the
+reverse of the common assumption. Wiring pin 3 → A4 and pin 4 → A5 swaps the I²C lines and
+the display never responds, with no error to diagnose from. See `docs/02-HARDWARE.md` §2.0b
+step 4 for the full mapping.
+
 ## 13.1 Correction — the OLED was never verified
 
 `01_sensor_check` reported `[ OK ] OLED at 0x3C`. **That was a false positive.**
