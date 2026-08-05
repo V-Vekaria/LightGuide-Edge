@@ -149,8 +149,8 @@ Update the status column at the end of every working session. Do not delete rows
 | Phase | Gate (must be true to pass) | Target date | Status |
 |---|---|---|---|
 | P0 Setup | Repo scaffolded, docs locked, board flashes and prints all 3 sensors | 31 Jul | ✅ **all three sensor channels working** — evidence: `reports/gate_G0_acceptance.md` |
-| P0.1 Hardware | HC-SR04, LDR, OLED, IMU verified; pin map confirmed | 31 Jul | ✅ **done** — root cause was the `−` rail at 3.3 V (§13.4) |
-| P0.2 Feedback devices | Buzzer, external LED, switch verified | 31 Jul | ✅ **done** — buzzer D9, LED D8, switch D7 (28 debounced presses) |
+| P0.1 Hardware | HC-SR04, LDR, OLED, IMU verified; pin map confirmed | 31 Jul | 🟡 **G0 NOT passed.** All 9 components electrically working (root cause was the `−` rail at 3.3 V, §13.4), but `reports/gate_G0_acceptance.txt` ends `LDR response FAIL` — swing 255 counts = 6% of scale. **Blocks P1**, see §11.6 |
+| P0.2 Feedback devices | Buzzer, external LED, switch verified | 31 Jul | ✅ **done** — buzzer D9, LED D8, switch D7 (16 debounced presses) |
 | P1 Calibration | LDR→lux curve + ultrasonic→cm curve recorded against references | 1 Aug | ⬜ |
 | P2 Logger | Labelled CSV capture over serial working end-to-end | 1 Aug | ⬜ |
 | P3 Dataset | ≥250 samples/class × 6 classes, ≥3 sessions, held-out session reserved | 2 Aug | ⬜ |
@@ -177,6 +177,7 @@ Legend: ⬜ not started · 🟡 in progress · ✅ done · 🔴 blocked
 | 2026-07-31 | **Acceptance test run** (`01e_acceptance`). 9/9 components electrically working; LED and buzzer confirmed by operator. **One open item: LDR pulldown is 1 kΩ and must be 10 kΩ** — the channel uses only 6% of ADC scale, which would weaken separation of `underlit`/`optimal`/`overlit`. Full report in `reports/gate_G0_acceptance.md` | **Swap the resistor, re-run `01e_acceptance`, then `tools/calibrate.py`** |
 | 2026-07-31 | ✅ **Full hardware bring-up complete.** All eight components verified on hardware: HC-SR04 (D2/D3, 0% dropouts @10 Hz), LDR (A0), IMU, OLED (0x3C), buzzer (D9), external LED (D8), switch (D7, debounced), plus on-board APDS9960 and RGB LED. Every CW1-promised component is present and working | **Run `tools/calibrate.py`, then the data logger — Day 1 of the roadmap** |
 | 2026-07-31 | Bring-up all but the switch. HC-SR04 (0% dropouts, 10 Hz), IMU, OLED (0x3C), LDR divider, buzzer (D9) and external LED (D8) all verified on hardware. Root cause of the long OLED/LDR hunt was the breadboard `−` rail sitting at 3.3 V (§13.4). Switch still not completing to ground — optional, does not gate anything | **Fix the ground rail, then run `tools/calibrate.py`** |
+| 2026-08-05 | **Audit before starting P1.** Repo state checked against the tracker: P1–P10 all unstarted (`data/calibration/`, `data/raw/*.csv`, `models/`, `firmware/03_inference/` all empty). Corrected two tracker claims that the evidence does not support: **G0 was recorded as passed but its own raw output says `NOT PASSED` / `LDR response FAIL`** (§11.6), and the switch count was 28 vs 16 measured. Closed the buzzer open item (§11.4) — D9 confirmed audible at G0. Verified toolchain unchanged: `01b_calibration` compiles 9% flash / 17% RAM, all Python deps present. Rig light (dimmable LED panel, 2000–10000 K) ordered, arrives evening 5 Aug | **Swap the LDR pulldown to 10 kΩ, re-run `01e_acceptance` for `LDR response PASS`, then `tools/calibrate.py`** |
 | 2026-07-31 | Built `00c_voltmeter` and `00d_sensor_inventory`. **Scanned `Wire1` and found the on-board sensors the earlier scan missed.** Board confirmed as Sense **Lite**: HTS221 absent, APDS9960 present and returning live data. **Measured that the LDR is not connected to A0, and retracted the false-positive OLED verification.** Pattern is unambiguous: 100% of on-board devices work, 0% of external ones do → single fault in the Nano-to-breadboard path, most likely unsoldered castellated headers (§13) | **Check the Nano's header pins are soldered and seated, then re-run `00d_sensor_inventory` and `00_wiring_probe`** |
 
 ---
@@ -187,14 +188,29 @@ Legend: ⬜ not started · 🟡 in progress · ✅ done · 🔴 blocked
 2. ~~HC-SR04 supply voltage~~ → superseded by the live fault in §13.
 3. ~~Board revision~~ → ✅ **Rev1 confirmed.** `IMU.begin()` succeeded via
    `Arduino_LSM9DS1` at 119 Hz. Both sketches are correctly set to `BOARD_REV 1`.
-4. **Buzzer** — user confirms it is wired, but the probe shows **D9 floating**, so it is
-   not on D9. Which pin? (A0–A3/A6/A7 were not swept.) Update the pin map in
-   `docs/02-HARDWARE.md` §2 once known. 🔴
+4. ~~Buzzer pin~~ → ✅ **D9 confirmed** (31 Jul, `01e_acceptance`): driven and confirmed
+   audible by the operator. The earlier "D9 floating" probe reading was taken while the
+   breadboard `−` rail sat at 3.3 V (§13.4), which is why it looked unconnected. The
+   §13.3 table is superseded on this point.
 5. ~~Reference light meter~~ → ✅ **Not needed.** `tools/calibrate.py` recovers the LDR's
    response exponent using the inverse-square law as the reference, with a tape measure and
    a lamp-off ambient reading. Absolute lux is not the quantity this system needs. See
    `docs/02-HARDWARE.md` §4. If a meter turns up later, one reading rescales the existing
    curve — no recollection.
+
+6. **LDR pulldown value — 🔴 OPEN, blocks P1 calibration.** The only recorded acceptance
+   run (`reports/gate_G0_acceptance.txt`, 31 Jul) ends `*** GATE G0 NOT PASSED ***` with
+   `LDR response FAIL`: the channel swings 255 counts (229–484), 6% of ADC scale. The
+   report's required action — swap the 1 kΩ pulldown (brown·black·red) for 10 kΩ
+   (brown·black·orange) and re-run `01e_acceptance` — has **no passing evidence on record**.
+
+   This is not cosmetic. `tools/calibrate.py` hardcodes `R_FIXED = 10_000.0`, so calibrating
+   against a physically-fitted 1 kΩ makes every `counts → R_ldr` conversion wrong by 10× and
+   γ meaningless. It also compresses `underlit` / `optimal` / `overlit` into 6% of the range,
+   which worsens after INT8 quantisation and would surface only as an unexplained accuracy
+   ceiling — after the dataset was collected and too late to fix.
+
+   **Gate: `01e_acceptance` must print `LDR response PASS` before `tools/calibrate.py` runs.**
 
 ---
 

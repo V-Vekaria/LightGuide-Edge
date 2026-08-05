@@ -288,8 +288,36 @@ distance where the room dominates. The on-board APDS9960 records the same sweep 
 independent cross-check. The fitter was validated against a simulated cell with a planted
 exponent: worst-case error 0.009 over a grid of γ, ambient level and noise.
 
+**Source geometry constrains the sweep.** The inverse-square reference is *point-source*
+physics. The rig light is a flat LED panel — an extended **area source** — whose falloff
+approaches `1/d` close in and only settles to `1/d²` at roughly five times the panel's
+largest dimension (≈1 m for a 20 cm panel). Sweep points inside that near field bias γ low,
+so the default 30–200 cm ladder puts five of its nine points in the wrong regime.
+
+Run the sweep out far enough that the clean regime has points to fit:
+
+```bash
+python tools/calibrate.py --port COM4 --distances 30 40 50 65 80 100 125 150 200 250 300
+```
+
+Fit γ on the far points; keep the near points as *measured evidence of the departure*. That
+plot is the direct experimental backing for the area-source argument in
+`docs/10-QA-DEFENCE.md` §1 — which that file already calls "the strongest single point" for
+why a learned model beats thresholds — and it belongs on slide 6.
+
+**Hold colour temperature fixed.** A CdS cell's spectral response is far from flat, so a
+2000–10000 K adjustable panel changes the LDR reading at *identical* illuminance. Choose one
+CCT (5600 K), record it on the session sheet, and never alter it — across calibration *and*
+every collection session. Drift between sessions turns the session-held-out test set into a
+different sensor regime and collapses the headline metric for a reason that is untraceable
+after the fact. The **dimmer** is the exception: fixed during calibration, varied during
+collection because it is the instrument that produces `underlit` and `overlit`.
+
 LDRs are also slow (tens to hundreds of ms) and temperature-sensitive — both are legitimate
-limitations to name on the evaluation slide.
+limitations to name on the evaluation slide. The slowness is helpful with a PWM-dimmed LED
+panel: the cell integrates the chop, and the firmware's 16-sample average over ~32 ms
+integrates it again. The APDS9960 is much faster, so if its readings look erratic at low
+dimmer settings that is flicker, not a fault.
 
 ---
 

@@ -26,11 +26,20 @@ arduino-cli upload -p COM4 --fqbn arduino:mbed_nano:nano33ble firmware/01e_accep
 
 Watch the serial output. You want `*** GATE G0 PASSED ***` with `LDR response PASS`.
 
+**Do not skip this.** The only acceptance run on record ends `GATE G0 NOT PASSED` with
+`LDR response FAIL`. `tools/calibrate.py` assumes a 10 kΩ pulldown (`R_FIXED`), so
+calibrating with the 1 kΩ still fitted makes γ meaningless — and it would show up months
+later as an unexplained accuracy ceiling, not as an error. See `AGENTS.md` §11.6.
+
 **2. Then calibrate (Day 1)**
 
 ```bash
-python tools/calibrate.py --port COM4
+python tools/calibrate.py --port COM4 --distances 30 40 50 65 80 100 125 150 200 250 300
 ```
+
+The extra far points are deliberate: the rig light is a flat panel, so inverse-square only
+holds beyond ~1 m and γ must be fitted out there. `docs/02-HARDWARE.md` §4 explains why, and
+why the near points are still worth collecting.
 
 Flash `firmware/01b_calibration` first — the script tells you if it isn't running. Guided
 sweep, ~10 minutes, needs a tape measure and a lamp you can switch on and off.

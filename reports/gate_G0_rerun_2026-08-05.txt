@@ -1,0 +1,52 @@
+ LIGHTGUIDE EDGE - GATE G0 ACCEPTANCE TEST
+ B00969091 | COM683 CW2
+==================================================
+
+PHASE A - automatic checks
+--------------------------------------------------
+  OLED (A4/A5)      : PASS - ACKs at 0x3C and driver initialised
+  IMU (LSM9DS1)     : PASS - 119.00 Hz, |a|=0.968 g
+  APDS9960          : PASS - live ambient=245
+  HC-SR04           : PASS - 1% dropouts, range 29-1826 mm
+  LDR range         : PASS - resting at 208/4095 (5% of scale, not clipped)
+--------------------------------------------------
+
+PHASE B - interactive, 25 seconds. Please:
+   1. COVER the LDR with your hand, then uncover
+   2. PRESS the switch a few times
+   3. WATCH the red LED and LISTEN for the buzzer
+
+   [switch press detected]
+   [switch press detected]
+   [switch press detected]
+   [switch press detected]
+   [switch press detected]
+   [switch press detected]
+   [switch press detected]
+   [switch press detected]
+   [switch press detected]
+   [switch press detected]
+   [switch press detected]
+
+--------------------------------------------------
+PHASE B RESULTS
+--------------------------------------------------
+  LDR light response: PASS - swing 309 counts (183-492)
+  Switch (D7)       : PASS - press detected
+
+--------------------------------------------------
+GATE G0 SUMMARY
+--------------------------------------------------
+  OLED           PASS
+  IMU            PASS
+  APDS9960       PASS
+  HC-SR04        PASS
+  LDR range      PASS
+  LDR response   PASS
+  Switch         PASS
+  LED + buzzer   confirm by eye/ear (driven above)
+--------------------------------------------------
+
+  *** GATE G0 PASSED - all automatic checks green ***
+  Next: python tools/calibrate.py --port COM4
+
