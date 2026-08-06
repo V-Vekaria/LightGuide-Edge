@@ -38,7 +38,8 @@ const float DIST_MAX_MM = 4000.0f;
 // ---- reference ----------------------------------------------------------
 // 100 cm is the operator's established working distance, so the device is
 // useful the instant it powers up and a faulty switch cannot leave it unusable.
-const float DEFAULT_REF_MM = 1000.0f;
+// (No default reference. See the `armed` flag below - the device is either set
+// up or it is not, and it never invents a reference it was not given.)
 
 // Twenty medians get medianed again to set a new reference. Twelve of them must
 // come back valid or the save is refused: a reference captured from a bad echo
@@ -53,13 +54,18 @@ const int REF_MIN_VALID = 12;
 const unsigned long HOLD_MS        = 2000;
 const unsigned long STUCK_CHECK_MS = 3000;
 
-float   refMm       = DEFAULT_REF_MM;
-Verdict prevVerdict = V_NO_READ;
-bool    switchFaulty = false;
+// The device is either set up or it is not. A reference exists because the
+// operator captured it, or the device says plainly that it has none. One rule
+// for both channels, and no universal "correct" light level to invent - because
+// none exists: the right ADC count depends entirely on the room, the lamp and
+// where the LDR sits.
+bool    armed        = false;
+float   refMm        = 0.0f;
+int     refLight     = 0;
 
-// Scaffolding for this task only - emit() takes the whole Sample once the light
-// channel gets its own CSV columns in Task 4.
-int     s_lastLight  = 0;
+Verdict prevDist     = V_NO_READ;
+Verdict prevLight    = V_NO_READ;
+bool    switchFaulty = false;
 
 Adafruit_SSD1306 display(128, 64, &Wire, -1);
 bool oledOk = false;
@@ -144,18 +150,23 @@ Sample sense() {
 // row that cannot be trusted must be identifiable after the fact. Reference
 // changes are marked by a `#` comment line rather than a column, so the moment
 // the operator re-referenced is findable in the log.
-void emit(float liveMm, Verdict v, int missed) {
-  Serial.print(refMm, 0);
+// Before a setup is captured there is no reference, so the difference columns
+// print NA rather than subtracting zero, and the verdict columns say UNSET
+// rather than NO ECHO - the echo is fine, there is simply nothing to judge it
+// against, and a log that conflates those two is a log that misleads later.
+void emit(const Sample &s, Verdict vd, Verdict vl) {
+  Serial.print(refMm, 0);            Serial.print(',');
+  Serial.print(s.distMm, 0);         Serial.print(',');
+  if (armed && s.distMm > 0) Serial.print(s.distMm - refMm, 0); else Serial.print(F("NA"));
   Serial.print(',');
-  Serial.print(liveMm, 0);
+  Serial.print(armed ? distanceWord(vd) : "UNSET");
   Serial.print(',');
-  if (liveMm > 0) Serial.print(liveMm - refMm, 0); else Serial.print(F("NA"));
+  Serial.print(s.missed);            Serial.print(',');
+  Serial.print(refLight);            Serial.print(',');
+  Serial.print(s.light);             Serial.print(',');
+  if (armed) Serial.print(s.light - refLight); else Serial.print(F("NA"));
   Serial.print(',');
-  Serial.print(distanceWord(v));
-  Serial.print(',');
-  Serial.print(missed);
-  Serial.print(',');
-  Serial.println(s_lastLight);
+  Serial.println(armed ? lightWord(vl) : "UNSET");
 }
 
 // ---- display ------------------------------------------------------------
@@ -173,54 +184,72 @@ void printCentred(const char *s, int size, int y) {
 }
 
 // A ruler. The reference sits at the centre tick and the live reading slides
-// along it. Full width spans +-200 mm, wide enough to watch yourself approach
-// without the marker pinned to an end for most of the walk.
-void drawBar(float liveMm) {
-  const int BAR_Y = 56, BAR_H = 8;
-  display.drawRect(0, BAR_Y, 128, BAR_H, SSD1306_WHITE);
-  display.drawFastVLine(64, BAR_Y, BAR_H, SSD1306_WHITE);
+// along it. `span` is the deviation that reaches either end, so each channel
+// picks a scale that suits it.
+void drawBar(int y, float live, float ref, float span) {
+  const int H = 4;
+  display.drawRect(0, y, 128, H, SSD1306_WHITE);
+  display.drawFastVLine(64, y, H, SSD1306_WHITE);
 
-  if (liveMm <= 0) return;
+  if (live <= 0 || span <= 0) return;
 
-  int x = 64 + (int)((liveMm - refMm) * 64.0f / 200.0f);
+  int x = 64 + (int)((live - ref) * 64.0f / span);
   if (x < 2)   x = 2;
   if (x > 125) x = 125;
-  display.fillRect(x - 1, BAR_Y + 2, 3, BAR_H - 4, SSD1306_WHITE);
+  display.fillRect(x - 1, y + 1, 3, H - 2, SSD1306_WHITE);
 }
 
-void render(float liveMm, Verdict v, int missed) {
+void render(const Sample &s, Verdict vd, Verdict vl) {
   if (!oledOk) return;
   display.clearDisplay();
 
-  // What we are aiming for, and what we have.
-  display.setTextSize(1);
-  display.setCursor(0, 0);
-  display.print(F("REF ")); display.print(refMm / 10.0f, 0); display.print(F("cm"));
-  display.setCursor(68, 0);
-  display.print(F("NOW "));
-  if (liveMm > 0) display.print(liveMm / 10.0f, 0); else display.print(F("--"));
+  if (!armed) {
+    // This screen's job is to help the operator position the rig and set the
+    // lamp before capturing, so the live numbers are the content.
+    printCentred("NO SETUP SAVED", 1, 0);
+    printCentred("hold button 2s", 1, 10);
+    display.drawFastHLine(0, 22, 128, SSD1306_WHITE);
 
-  // The verdict, as large as the panel allows. CORRECT at size 3 is 126 px of
-  // the 128 available - if it clips on the hardware, drop this one call to 2.
-  printCentred(distanceWord(v), 3, 18);
+    display.setTextSize(2);
+    display.setCursor(0, 28);
+    display.print(F("d "));
+    if (s.distMm > 0) display.print(s.distMm / 10.0f, 0); else display.print(F("--"));
+    display.setTextSize(1);
+    display.print(F(" cm"));
 
-  // How far out, and which way to move.
-  display.setTextSize(1);
-  display.setCursor(0, 46);
-  if (v == V_NO_READ) {
-    display.print(F("aim at target"));
-  } else {
-    float diffCm = (liveMm - refMm) / 10.0f;
-    if (diffCm >= 0) display.print('+');
-    display.print(diffCm, 0);
-    display.print(F("cm "));
-    if      (v == V_ABOVE)   display.print(F("move closer"));
-    else if (v == V_BELOW) display.print(F("move back"));
-    else if (missed > 1)   display.print(F("hold it (noisy)"));
-    else                   display.print(F("hold it"));
+    display.setTextSize(2);
+    display.setCursor(0, 46);
+    display.print(F("l "));
+    display.print(s.light);
+
+    display.display();
+    return;
   }
 
-  drawBar(liveMm);
+  // Distance, top half.
+  display.setTextSize(1);
+  display.setCursor(0, 0);
+  display.print(F("DIST ")); display.print(refMm / 10.0f, 0); display.print(F("cm"));
+  display.setCursor(74, 0);
+  if (s.distMm > 0) display.print(s.distMm / 10.0f, 0); else display.print(F("--"));
+  display.print(F("cm"));
+  printCentred(distanceWord(vd), 2, 9);
+  drawBar(26, s.distMm, refMm, 200.0f);
+
+  display.drawFastHLine(0, 31, 128, SSD1306_WHITE);
+
+  // Light, bottom half.
+  display.setTextSize(1);
+  display.setCursor(0, 33);
+  display.print(F("LGHT ")); display.print(refLight);
+  display.setCursor(80, 33);
+  display.print(s.light);
+  printCentred(lightWord(vl), 2, 42);
+  // Span is a quarter of the reference, so the marker reaches an end at the
+  // same proportional deviation whatever the light level - matching the
+  // proportional tolerance band.
+  drawBar(59, (float)s.light, (float)refLight, refLight * 0.25f);
+
   display.display();
 }
 
@@ -237,56 +266,99 @@ void silenceBuzzer() {
 //
 // Every transition is scheduled off millis(). Sounding a tone with delay() would
 // block the loop and make the display lag the sensor by the length of the beep.
-void updateBuzzer(Verdict v, bool verdictChanged) {
-  unsigned long now = millis();
+// Distance first, then light. That is the order a rig is actually set up in -
+// position the stand, then dial the brightness - so the operator is only ever
+// asked to fix one thing at a time, and the sound is never ambiguous about
+// which channel it means.
+//
+// Rules are evaluated in order; the first match wins.
+//   0. not armed           -> silent, there is nothing to guide towards
+//   1. distance unreadable -> silent, cannot say which way to move
+//   2. distance wrong      -> distance pattern
+//   3. light unreadable    -> silent, a clipped divider is not a verdict
+//   4. light wrong         -> double-blip
+//   5. both correct        -> one chirp, then silence
+//
+// Rules 1 and 3 are separate on purpose. An unreadable distance silences
+// everything, because the operator is being asked to move and the device cannot
+// tell them where to. An unreadable light silences only the light layer - the
+// distance guidance above it has already been given.
+void updateBuzzer(Verdict vd, Verdict vl) {
+  static Verdict lastD     = V_NO_READ;
+  static Verdict lastL     = V_NO_READ;
+  static bool    lastArmed = false;
 
-  if (verdictChanged) {
+  const unsigned long now = millis();
+
+  if (vd != lastD || vl != lastL || armed != lastArmed) {
     silenceBuzzer();
     buzzerPhaseStart = now;
     correctChirpDone = false;
+    lastD = vd; lastL = vl; lastArmed = armed;
   }
 
-  if (v == V_NO_READ) {
-    silenceBuzzer();
+  if (!armed || vd == V_NO_READ) { silenceBuzzer(); return; }
+
+  if (vd != V_CORRECT) {
+    const unsigned int  freq  = (vd == V_ABOVE) ? 400 : 1200;
+    const unsigned long onMs  = (vd == V_ABOVE) ? 80  : 60;
+    const unsigned long perMs = (vd == V_ABOVE) ? 600 : 200;
+
+    unsigned long phase = now - buzzerPhaseStart;
+    if (phase >= perMs) { buzzerPhaseStart = now; phase = 0; }
+
+    if (phase < onMs) { if (!buzzerOn) { tone(PIN_BUZZ, freq); buzzerOn = true; } }
+    else              { if (buzzerOn) silenceBuzzer(); }
     return;
   }
 
-  if (v == V_CORRECT) {
-    if (correctChirpDone) return;
-    if (!buzzerOn) {
-      tone(PIN_BUZZ, 1500);
-      buzzerOn = true;
-      buzzerPhaseStart = now;
-    } else if (now - buzzerPhaseStart >= 150) {
-      silenceBuzzer();
-      correctChirpDone = true;
-    }
+  if (vl == V_NO_READ) { silenceBuzzer(); return; }
+
+  if (vl != V_CORRECT) {
+    // Two 40 ms tones 80 ms apart, repeating every 700 ms. The rhythm is what
+    // identifies the light channel by ear before the operator looks up; pitch
+    // then says which direction.
+    const unsigned int freq = (vl == V_ABOVE) ? 1000 : 500;
+
+    unsigned long phase = now - buzzerPhaseStart;
+    if (phase >= 700) { buzzerPhaseStart = now; phase = 0; }
+
+    const bool on = (phase < 40) || (phase >= 80 && phase < 120);
+    if (on) { if (!buzzerOn) { tone(PIN_BUZZ, freq); buzzerOn = true; } }
+    else    { if (buzzerOn) silenceBuzzer(); }
     return;
   }
 
-  const unsigned int  freq  = (v == V_ABOVE) ? 400 : 1200;
-  const unsigned long onMs  = (v == V_ABOVE) ? 80  : 60;
-  const unsigned long perMs = (v == V_ABOVE) ? 600 : 200;
-
-  unsigned long phase = now - buzzerPhaseStart;
-  if (phase >= perMs) {
+  // Both correct: one chirp on arrival, then silence. Silence-means-success is
+  // the parking-sensor convention, and a continuous tone would cover the
+  // narration in the demo video.
+  if (correctChirpDone) { if (buzzerOn) silenceBuzzer(); return; }
+  if (!buzzerOn) {
+    tone(PIN_BUZZ, 1500);
+    buzzerOn = true;
     buzzerPhaseStart = now;
-    phase = 0;
-  }
-
-  if (phase < onMs) {
-    if (!buzzerOn) { tone(PIN_BUZZ, freq); buzzerOn = true; }
-  } else {
-    if (buzzerOn) silenceBuzzer();
+  } else if (now - buzzerPhaseStart >= 150) {
+    silenceBuzzer();
+    correctChirpDone = true;
   }
 }
 
-// The on-board RGB LED is active LOW, so LOW turns a channel on. It needs no
-// wiring and it is the output that actually reads on camera across a room.
-void updateLed(Verdict v) {
-  digitalWrite(LEDR, (v == V_ABOVE || v == V_BELOW) ? LOW : HIGH);
-  digitalWrite(LEDG, (v == V_CORRECT)             ? LOW : HIGH);
-  digitalWrite(LEDB, HIGH);
+// Green both right, red distance wrong, blue light wrong, off when unset. The
+// on-board RGB is active LOW, needs no wiring, and is the output that actually
+// reads on camera from across a room - the colour names the failing channel
+// before the operator is close enough to read the screen.
+void updateLed(Verdict vd, Verdict vl) {
+  bool r = false, g = false, b = false;
+
+  if (armed) {
+    if      (vd == V_ABOVE || vd == V_BELOW)     r = true;
+    else if (vl == V_ABOVE || vl == V_BELOW)     b = true;
+    else if (vd == V_CORRECT && vl == V_CORRECT) g = true;
+  }
+
+  digitalWrite(LEDR, r ? LOW : HIGH);
+  digitalWrite(LEDG, g ? LOW : HIGH);
+  digitalWrite(LEDB, b ? LOW : HIGH);
 }
 
 // ---- setting the reference ----------------------------------------------
@@ -314,15 +386,18 @@ bool holdFired() {
   return false;
 }
 
-// Returns the new reference in mm, or -1 if too few pings came back valid.
-float captureReference() {
+// Returns true and fills both references, or returns false and changes nothing.
+// Twenty samples: median for distance, mean for light.
+bool captureReference(float &outMm, int &outLight) {
   float v[REF_SAMPLES];
-  int n = 0;
+  long  lightAcc = 0;
+  int   n = 0;
 
   for (int i = 0; i < REF_SAMPLES; i++) {
     Sample smp = sense();
     float d = smp.distMm;
     if (d > 0) v[n++] = d;
+    lightAcc += smp.light;
 
     if (oledOk) {
       display.clearDisplay();
@@ -339,14 +414,21 @@ float captureReference() {
     }
   }
 
-  if (n < REF_MIN_VALID) return -1.0f;
+  if (n < REF_MIN_VALID) return false;
+
+  // A reference pinned near either rail is a clipped divider, not a light
+  // level. Accepting it would bake a wiring fault into every later verdict.
+  int light = (int)(lightAcc / REF_SAMPLES);
+  if (!lightReadingValid(light)) return false;
 
   for (int i = 1; i < n; i++) {
     float k = v[i]; int j = i - 1;
     while (j >= 0 && v[j] > k) { v[j + 1] = v[j]; j--; }
     v[j + 1] = k;
   }
-  return v[n / 2];
+  outMm    = v[n / 2];
+  outLight = light;
+  return true;
 }
 
 // delay() is acceptable here and nowhere else in this sketch: saving is a
@@ -354,10 +436,15 @@ float captureReference() {
 // runs. In the main loop the same call would make the display lag the sensor.
 void doSave() {
   silenceBuzzer();
-  float r = captureReference();
 
-  if (r < 0.0f) {
-    Serial.println(F("# SAVE REFUSED - not enough valid echoes"));
+  float newMm    = 0.0f;
+  int   newLight = 0;
+
+  if (!captureReference(newMm, newLight)) {
+    // Both failure modes reach the operator the same way, because the remedy is
+    // the same: aim it properly and try again. The serial log keeps the
+    // distinction for later diagnosis.
+    Serial.println(F("# SAVE REFUSED - bad echoes or clipped light reading"));
     tone(PIN_BUZZ, 200); delay(400); noTone(PIN_BUZZ);
     if (oledOk) {
       display.clearDisplay();
@@ -372,13 +459,16 @@ void doSave() {
       display.display();
       delay(1800);
     }
-    return;                       // the old reference survives untouched
+    return;                       // both previous references survive untouched
   }
 
-  refMm = r;
+  refMm    = newMm;
+  refLight = newLight;
+  armed    = true;
+
   Serial.print(F("# REFERENCE SAVED "));
-  Serial.print(refMm, 0);
-  Serial.println(F(" mm"));
+  Serial.print(refMm, 0);   Serial.print(F(" mm / "));
+  Serial.print(refLight);   Serial.println(F(" counts"));
 
   tone(PIN_BUZZ, 1200); delay(80); noTone(PIN_BUZZ); delay(60);
   tone(PIN_BUZZ, 1600); delay(80); noTone(PIN_BUZZ);
@@ -386,21 +476,20 @@ void doSave() {
   if (oledOk) {
     display.clearDisplay();
     display.setTextSize(2);
-    display.setCursor(0, 12);
-    display.print(F("SAVED"));
-    display.setTextSize(3);
-    display.setCursor(0, 34);
-    display.print(refMm / 10.0f, 0);
+    display.setCursor(0, 4);  display.print(F("SAVED"));
     display.setTextSize(1);
-    display.setCursor(96, 44);
-    display.print(F("cm"));
+    display.setCursor(0, 28); display.print(F("dist  "));
+    display.print(refMm / 10.0f, 0); display.print(F(" cm"));
+    display.setCursor(0, 42); display.print(F("light "));
+    display.print(refLight);
     display.display();
-    delay(1400);
+    delay(1600);
   }
 
-  // Forget the history so the new reference earns its verdict from scratch and
+  // Forget both histories so the new setup earns its verdicts from scratch and
   // CORRECT chirps on arrival rather than sliding in silently.
-  prevVerdict = V_NO_READ;
+  prevDist  = V_NO_READ;
+  prevLight = V_NO_READ;
 }
 
 void setup() {
@@ -440,7 +529,7 @@ void setup() {
 
   runDecisionSelfTest(Serial);
   selfTestReported = (bool)Serial;
-  Serial.println(F("ref_mm,live_mm,diff_mm,verdict,missed"));
+  Serial.println(F("ref_mm,live_mm,diff_mm,dist_verdict,missed,ref_ldr,live_ldr,diff_ldr,light_verdict"));
 }
 
 void loop() {
@@ -450,7 +539,7 @@ void loop() {
   // a monitor, not only if you win a race against the board.
   if (!selfTestReported && Serial) {
     runDecisionSelfTest(Serial);
-    Serial.println(F("ref_mm,live_mm,diff_mm,verdict,missed"));
+    Serial.println(F("ref_mm,live_mm,diff_mm,dist_verdict,missed,ref_ldr,live_ldr,diff_ldr,light_verdict"));
     selfTestReported = true;
   }
 
@@ -460,15 +549,21 @@ void loop() {
   }
 
   Sample s = sense();
-  float liveMm = s.distMm;
-  int   missed = s.missed;
-  s_lastLight  = s.light;
-  Verdict v = decideDistance(liveMm, refMm, prevVerdict);
 
-  render(liveMm, v, missed);
-  updateBuzzer(v, v != prevVerdict);
-  updateLed(v);
-  emit(liveMm, v, missed);
+  // Until a setup is captured there is nothing to compare against, so both
+  // channels stay unread rather than being judged against a made-up reference.
+  Verdict vd = V_NO_READ, vl = V_NO_READ;
+  if (armed) {
+    vd = decideDistance(s.distMm, refMm, prevDist);
+    vl = decideLight(lightReadingValid(s.light) ? (float)s.light : -1.0f,
+                     (float)refLight, prevLight);
+  }
 
-  prevVerdict = v;
+  render(s, vd, vl);
+  updateBuzzer(vd, vl);
+  updateLed(vd, vl);
+  emit(s, vd, vl);
+
+  prevDist  = vd;
+  prevLight = vl;
 }
