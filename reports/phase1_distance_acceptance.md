@@ -177,12 +177,12 @@ stating as a deliberate trade-off rather than leaving unexplained.
 
 Named here because the Demo rubric row rewards *extensive understanding of the limitations*.
 
-1. **Multi-target beam ambiguity is the dominant error mode.** Not noise — the sensor is
-   remarkably quiet at σ = 1.89 mm. The failure is that it cannot tell *which* object it is
-   measuring. With two surfaces in the cone it alternates between them, producing verdict
-   changes that no amount of hysteresis can suppress because the readings are individually
-   valid. This is the single most important thing to say about the distance channel.
-   **A between-sample plausibility filter would address it and is not yet implemented** — see §9.
+1. **Multi-target beam ambiguity** — originally recorded here as "the dominant error mode" and
+   an inherent sensor property. **§10 corrects this:** the cause was an angled target, and
+   squaring it removed the effect entirely. The residual limitation is real but narrower than
+   stated: *the subject must present a face roughly square to the sensor.* Off-axis surfaces
+   deflect the pulse and the beam then measures whatever else is in the cone — and it does so
+   with no dropped pings, so nothing in the data marks the reading as untrustworthy.
 2. **The reference is held in RAM only.** A power cycle silently reverts to the 100 cm default.
    Deliberate (spec §9), but the operator gets no warning that it happened.
 3. **No temperature compensation.** Speed of sound varies ~0.6 m/s per °C. The LPS22HB's
@@ -196,17 +196,78 @@ Named here because the Demo rubric row rewards *extensive understanding of the l
 
 ---
 
-## 9. Recommended next change
+## 9. Recommended next change — SUPERSEDED, see §11
 
-A **between-sample plausibility filter**. The current median-of-5 rejects outliers within a
-group but nothing compares a group to the one before it. At 7.8 Hz, a 300 mm change between
-consecutive samples implies 2.3 m/s of target motion — implausible for a light stand being
-positioned. Requiring two consecutive agreeing samples before accepting a large jump would
-remove the dominant error mode identified in §8.1 at a cost of about ten lines and one extra
-sample of latency.
+This section originally recommended a **between-sample plausibility filter** to suppress the
+verdict jumps identified in §8.1, on the reasoning that a 300 mm change between consecutive
+samples implies 2.3 m/s of target motion and is therefore implausible.
 
-Not implemented, because Phase 1 was accepted as complete before this analysis was run. Worth
-doing before the demo video.
+**That recommendation was wrong, and §11 records the experiment that disproved it.** The filter
+was never implemented, and on this evidence it should not be.
+
+---
+
+## 10. Correction to §8.1 — the dominant error mode was target geometry
+
+**Added 6 August, after the fault recurred during Phase 2 work.**
+
+§8.1 named multi-target beam ambiguity as "the dominant error mode" and treated it as an
+inherent property of the sensor. A photograph of the rig showed the actual cause: **the target
+box was leaning back against a radiator, presenting an angled face to the beam.**
+`docs/02-HARDWARE.md` §6 names this directly — "soft or angled surfaces absorb or deflect the
+pulse" — but it had been read as a caveat about *materials* rather than as the operating
+condition that was actually in force.
+
+An angled face reflects the pulse away from the receiver instead of back to it. The beam then
+returns whatever else is in the ~15° cone, which in a furnished room is a wardrobe door, a
+radiator or a bed base. The three tight clusters were three real objects, correctly measured.
+The sensor was never at fault, and neither was the median-of-5 filter.
+
+### The controlled experiment
+
+One variable changed — the box was stood square to the beam. Nothing else was touched: same
+room, same sensor, same firmware, same position, minutes apart.
+
+| Measurement | Angled target | Square target |
+|---|---|---|
+| Distinct reading clusters | **3** — 935, 1110, 1405 mm | **1** |
+| Total spread | 481 mm | **3 mm** (719–722) |
+| Noise σ | not meaningful (multi-modal) | **0.6 mm** |
+| Consecutive jumps > 100 mm | **41 of 129** | **0 of 135** |
+| Dropped pings | 0 of 650 | 0 of 680 |
+| Samples | 130 | 136 |
+
+**The error mode did not need software. It needed the target standing up straight.**
+
+σ = 0.6 mm also makes the ±30 mm tolerance **50σ wide**, not the 16σ estimated in §2 — the
+Phase 1 figure was measured against a target that was, unknowingly, already partly misaligned.
+
+### Why this is worth saying out loud in the deck
+
+Three reasons, and the Evaluation and Demo rubric rows reward all of them:
+
+1. **A measured conclusion was overturned by a better-controlled measurement.** The original
+   analysis was rigorous about *what* the data showed and wrong about *why*. That distinction is
+   the difference between reporting and understanding.
+2. **The proposed fix would have hidden the fault.** A plausibility filter would have smoothed
+   the jumps away and left the device quietly measuring the wardrobe instead of the subject.
+   It would have looked like an improvement and been a regression.
+3. **It sets a real operating constraint on the product**: the subject must present a surface
+   roughly square to the sensor. That is a genuine limitation of ultrasonic ranging, it is now
+   quantified rather than asserted, and it belongs on the limitations slide.
+
+---
+
+## 11. Revised recommendation
+
+**Do not add the plausibility filter.** On this evidence it addresses a symptom whose cause is
+target alignment, and it would mask exactly the condition the operator needs to be told about.
+
+If robustness against off-axis targets is wanted later, the honest approach is the opposite of
+smoothing: **detect** multi-modal readings and *report* them — if consecutive sample groups
+disagree by more than the tolerance band while the miss count stays at zero, the beam is seeing
+more than one surface, and the right response is to tell the operator to re-aim rather than to
+average the two answers together.
 
 ---
 
