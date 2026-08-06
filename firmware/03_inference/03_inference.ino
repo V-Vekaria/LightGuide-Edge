@@ -39,11 +39,22 @@ const float DIST_MAX_MM = 4000.0f;
 // useful the instant it powers up and a faulty switch cannot leave it unusable.
 const float DEFAULT_REF_MM = 1000.0f;
 
-enum Mode { MODE_GUIDE, MODE_SETUP };
+// Twenty medians get medianed again to set a new reference. Twelve of them must
+// come back valid or the save is refused: a reference captured from a bad echo
+// would corrupt every later verdict while looking exactly like a software fault.
+const int REF_SAMPLES   = 20;
+const int REF_MIN_VALID = 12;
 
-Mode    mode        = MODE_GUIDE;
+// ---- button -------------------------------------------------------------
+// Hold rather than tap. A tap is one accidental knock away from silently
+// re-referencing to whatever happens to be in front of the sensor, which you
+// would not notice until the verdicts stopped making sense.
+const unsigned long HOLD_MS        = 2000;
+const unsigned long STUCK_CHECK_MS = 3000;
+
 float   refMm       = DEFAULT_REF_MM;
 Verdict prevVerdict = V_NO_ECHO;
+bool    switchFaulty = false;
 
 Adafruit_SSD1306 display(128, 64, &Wire, -1);
 bool oledOk = false;
@@ -92,11 +103,11 @@ float readDistanceMm(int &missed) {
 }
 
 // One CSV row per loop. This is the log the online evaluation is computed from
-// later, which is why it carries the mode and the raw miss count as well as the
-// verdict - a row that cannot be trusted must be identifiable after the fact.
+// later, which is why it carries the raw miss count as well as the verdict - a
+// row that cannot be trusted must be identifiable after the fact. Reference
+// changes are marked by a `#` comment line rather than a column, so the moment
+// the operator re-referenced is findable in the log.
 void emit(float liveMm, Verdict v, int missed) {
-  Serial.print(mode == MODE_GUIDE ? F("GUIDE") : F("SETUP"));
-  Serial.print(',');
   Serial.print(refMm, 0);
   Serial.print(',');
   Serial.print(liveMm, 0);
@@ -239,6 +250,120 @@ void updateLed(Verdict v) {
   digitalWrite(LEDB, HIGH);
 }
 
+// ---- setting the reference ----------------------------------------------
+
+// Fires once when the button has been held for HOLD_MS, and not again until it
+// is released and pressed afresh. Non-blocking, because the loop has to keep
+// reading the sensor while the operator is holding the button down.
+bool holdFired() {
+  static bool          wasDown = false;
+  static unsigned long downAt  = 0;
+  static bool          fired   = false;
+
+  if (switchFaulty) return false;
+
+  const bool down = (digitalRead(PIN_SWITCH) == LOW);
+  const unsigned long now = millis();
+
+  if (!down)    { wasDown = false; return false; }
+  if (!wasDown) { wasDown = true; downAt = now; fired = false; return false; }
+
+  if (!fired && (now - downAt) >= HOLD_MS) {
+    fired = true;
+    return true;
+  }
+  return false;
+}
+
+// Returns the new reference in mm, or -1 if too few pings came back valid.
+float captureReference() {
+  float v[REF_SAMPLES];
+  int n = 0;
+
+  for (int i = 0; i < REF_SAMPLES; i++) {
+    int missed = 0;
+    float d = readDistanceMm(missed);
+    if (d > 0) v[n++] = d;
+
+    if (oledOk) {
+      display.clearDisplay();
+      display.setTextSize(2);
+      display.setCursor(0, 8);
+      display.print(F("SAVING"));
+      display.setTextSize(1);
+      display.setCursor(0, 32);
+      display.print(n); display.print(F(" of ")); display.print(i + 1);
+      display.print(F(" good"));
+      display.drawRect(0, 48, 128, 10, SSD1306_WHITE);
+      display.fillRect(2, 50, (int)((124L * (i + 1)) / REF_SAMPLES), 6, SSD1306_WHITE);
+      display.display();
+    }
+  }
+
+  if (n < REF_MIN_VALID) return -1.0f;
+
+  for (int i = 1; i < n; i++) {
+    float k = v[i]; int j = i - 1;
+    while (j >= 0 && v[j] > k) { v[j + 1] = v[j]; j--; }
+    v[j + 1] = k;
+  }
+  return v[n / 2];
+}
+
+// delay() is acceptable here and nowhere else in this sketch: saving is a
+// one-shot action the operator asked for, and nothing is being tracked while it
+// runs. In the main loop the same call would make the display lag the sensor.
+void doSave() {
+  silenceBuzzer();
+  float r = captureReference();
+
+  if (r < 0.0f) {
+    Serial.println(F("# SAVE REFUSED - not enough valid echoes"));
+    tone(PIN_BUZZ, 200); delay(400); noTone(PIN_BUZZ);
+    if (oledOk) {
+      display.clearDisplay();
+      display.setTextSize(2);
+      display.setCursor(0, 10);
+      display.print(F("SAVE"));
+      display.setCursor(0, 30);
+      display.print(F("FAILED"));
+      display.setTextSize(1);
+      display.setCursor(0, 54);
+      display.print(F("aim at target, retry"));
+      display.display();
+      delay(1800);
+    }
+    return;                       // the old reference survives untouched
+  }
+
+  refMm = r;
+  Serial.print(F("# REFERENCE SAVED "));
+  Serial.print(refMm, 0);
+  Serial.println(F(" mm"));
+
+  tone(PIN_BUZZ, 1200); delay(80); noTone(PIN_BUZZ); delay(60);
+  tone(PIN_BUZZ, 1600); delay(80); noTone(PIN_BUZZ);
+
+  if (oledOk) {
+    display.clearDisplay();
+    display.setTextSize(2);
+    display.setCursor(0, 12);
+    display.print(F("SAVED"));
+    display.setTextSize(3);
+    display.setCursor(0, 34);
+    display.print(refMm / 10.0f, 0);
+    display.setTextSize(1);
+    display.setCursor(96, 44);
+    display.print(F("cm"));
+    display.display();
+    delay(1400);
+  }
+
+  // Forget the history so the new reference earns its verdict from scratch and
+  // CORRECT chirps on arrival rather than sliding in silently.
+  prevVerdict = V_NO_ECHO;
+}
+
 void setup() {
   Serial.begin(115200);
   while (!Serial && millis() < 3000) { }
@@ -256,9 +381,22 @@ void setup() {
   pinMode(LEDR, OUTPUT); pinMode(LEDG, OUTPUT); pinMode(LEDB, OUTPUT);
   digitalWrite(LEDR, HIGH); digitalWrite(LEDG, HIGH); digitalWrite(LEDB, HIGH);
 
+  pinMode(PIN_SWITCH, INPUT_PULLUP);
+
+  // A switch stuck LOW would re-reference over and over and make the device
+  // useless. A healthy released switch reads HIGH and leaves this immediately;
+  // only a genuinely stuck one costs the full three seconds.
+  switchFaulty = true;
+  unsigned long t0 = millis();
+  while (millis() - t0 < STUCK_CHECK_MS) {
+    if (digitalRead(PIN_SWITCH) == HIGH) { switchFaulty = false; break; }
+    delay(10);
+  }
+  if (switchFaulty) Serial.println(F("# switch stuck LOW - disabled for this run"));
+
   runDecisionSelfTest(Serial);
   selfTestReported = (bool)Serial;
-  Serial.println(F("mode,ref_mm,live_mm,diff_mm,verdict,missed"));
+  Serial.println(F("ref_mm,live_mm,diff_mm,verdict,missed"));
 }
 
 void loop() {
@@ -268,8 +406,13 @@ void loop() {
   // a monitor, not only if you win a race against the board.
   if (!selfTestReported && Serial) {
     runDecisionSelfTest(Serial);
-    Serial.println(F("mode,ref_mm,live_mm,diff_mm,verdict,missed"));
+    Serial.println(F("ref_mm,live_mm,diff_mm,verdict,missed"));
     selfTestReported = true;
+  }
+
+  if (holdFired()) {
+    doSave();
+    return;
   }
 
   int missed = 0;
