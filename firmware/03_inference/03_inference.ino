@@ -53,7 +53,7 @@ const unsigned long HOLD_MS        = 2000;
 const unsigned long STUCK_CHECK_MS = 3000;
 
 float   refMm       = DEFAULT_REF_MM;
-Verdict prevVerdict = V_NO_ECHO;
+Verdict prevVerdict = V_NO_READ;
 bool    switchFaulty = false;
 
 Adafruit_SSD1306 display(128, 64, &Wire, -1);
@@ -114,7 +114,7 @@ void emit(float liveMm, Verdict v, int missed) {
   Serial.print(',');
   if (liveMm > 0) Serial.print(liveMm - refMm, 0); else Serial.print(F("NA"));
   Serial.print(',');
-  Serial.print(verdictName(v));
+  Serial.print(distanceWord(v));
   Serial.print(',');
   Serial.println(missed);
 }
@@ -163,20 +163,20 @@ void render(float liveMm, Verdict v, int missed) {
 
   // The verdict, as large as the panel allows. CORRECT at size 3 is 126 px of
   // the 128 available - if it clips on the hardware, drop this one call to 2.
-  printCentred(v == V_NO_ECHO ? "NO ECHO" : verdictName(v), 3, 18);
+  printCentred(distanceWord(v), 3, 18);
 
   // How far out, and which way to move.
   display.setTextSize(1);
   display.setCursor(0, 46);
-  if (v == V_NO_ECHO) {
+  if (v == V_NO_READ) {
     display.print(F("aim at target"));
   } else {
     float diffCm = (liveMm - refMm) / 10.0f;
     if (diffCm >= 0) display.print('+');
     display.print(diffCm, 0);
     display.print(F("cm "));
-    if      (v == V_FAR)   display.print(F("move closer"));
-    else if (v == V_CLOSE) display.print(F("move back"));
+    if      (v == V_ABOVE)   display.print(F("move closer"));
+    else if (v == V_BELOW) display.print(F("move back"));
     else if (missed > 1)   display.print(F("hold it (noisy)"));
     else                   display.print(F("hold it"));
   }
@@ -207,7 +207,7 @@ void updateBuzzer(Verdict v, bool verdictChanged) {
     correctChirpDone = false;
   }
 
-  if (v == V_NO_ECHO) {
+  if (v == V_NO_READ) {
     silenceBuzzer();
     return;
   }
@@ -225,9 +225,9 @@ void updateBuzzer(Verdict v, bool verdictChanged) {
     return;
   }
 
-  const unsigned int  freq  = (v == V_FAR) ? 400 : 1200;
-  const unsigned long onMs  = (v == V_FAR) ? 80  : 60;
-  const unsigned long perMs = (v == V_FAR) ? 600 : 200;
+  const unsigned int  freq  = (v == V_ABOVE) ? 400 : 1200;
+  const unsigned long onMs  = (v == V_ABOVE) ? 80  : 60;
+  const unsigned long perMs = (v == V_ABOVE) ? 600 : 200;
 
   unsigned long phase = now - buzzerPhaseStart;
   if (phase >= perMs) {
@@ -245,7 +245,7 @@ void updateBuzzer(Verdict v, bool verdictChanged) {
 // The on-board RGB LED is active LOW, so LOW turns a channel on. It needs no
 // wiring and it is the output that actually reads on camera across a room.
 void updateLed(Verdict v) {
-  digitalWrite(LEDR, (v == V_FAR || v == V_CLOSE) ? LOW : HIGH);
+  digitalWrite(LEDR, (v == V_ABOVE || v == V_BELOW) ? LOW : HIGH);
   digitalWrite(LEDG, (v == V_CORRECT)             ? LOW : HIGH);
   digitalWrite(LEDB, HIGH);
 }
@@ -361,7 +361,7 @@ void doSave() {
 
   // Forget the history so the new reference earns its verdict from scratch and
   // CORRECT chirps on arrival rather than sliding in silently.
-  prevVerdict = V_NO_ECHO;
+  prevVerdict = V_NO_READ;
 }
 
 void setup() {
@@ -417,7 +417,7 @@ void loop() {
 
   int missed = 0;
   float liveMm = readDistanceMm(missed);
-  Verdict v = decide(liveMm, refMm, prevVerdict);
+  Verdict v = decideDistance(liveMm, refMm, prevVerdict);
 
   render(liveMm, v, missed);
   updateBuzzer(v, v != prevVerdict);
