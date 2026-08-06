@@ -19,6 +19,7 @@
 
 #include "decision.h"
 #include "self_test.h"
+#include "model.h"
 
 // ---- pins (docs/02-HARDWARE.md) ----------------------------------------
 const int PIN_TRIG   = 2;
@@ -87,6 +88,17 @@ const unsigned long RUN_RECORD_MS = 5000;   // ~40 samples at 8 Hz
 int sessionId = 1;
 int labelIdx  = 0;
 int runCount[CLASS_COUNT] = {0, 0, 0, 0, 0};
+
+// ---- on-device inference ------------------------------------------------
+// The classifier reads a window of the last MODEL_WINDOW samples, not a single
+// reading, so the device carries a small ring buffer of deviations. At two
+// floats per slot this is 80 bytes - the whole reason summary statistics were
+// chosen over raw sequences back in the ML plan.
+float winDist[MODEL_WINDOW];
+float winLight[MODEL_WINDOW];
+int   winHead  = 0;
+int   winCount = 0;
+int   modelClass = -1;      // -1 until the window has filled
 
 Adafruit_SSD1306 display(128, 64, &Wire, -1);
 bool oledOk = false;
@@ -196,7 +208,63 @@ void emit(const Sample &s, Verdict vd, Verdict vl) {
   Serial.print(s.light);             Serial.print(',');
   if (armed) Serial.print(s.light - refLight); else Serial.print(F("NA"));
   Serial.print(',');
-  Serial.println(armed ? lightWord(vl) : "UNSET");
+  Serial.print(armed ? lightWord(vl) : "UNSET");
+  Serial.print(',');
+  // The model's own verdict, logged alongside the rule's so the two can be
+  // compared offline. This column is what the online evaluation is built from.
+  Serial.println(modelClass >= 0 ? className(modelClass) : "NA");
+}
+
+// ---- on-device inference ------------------------------------------------
+
+void resetWindow() {
+  winHead = winCount = 0;
+  modelClass = -1;
+}
+
+void pushWindow(float dDist, float dLight) {
+  winDist[winHead]  = dDist;
+  winLight[winHead] = dLight;
+  winHead = (winHead + 1) % MODEL_WINDOW;
+  if (winCount < MODEL_WINDOW) winCount++;
+}
+
+// Same four statistics per channel that tools/train_offline.py computes, in the
+// same order. If these ever disagree the model is being fed something it was
+// never trained on, and the accuracy figure stops meaning anything.
+bool computeFeatures(Features &f) {
+  if (winCount < MODEL_WINDOW) return false;
+
+  float dSum = 0, lSum = 0;
+  float dMin = winDist[0],  dMax = winDist[0];
+  float lMin = winLight[0], lMax = winLight[0];
+
+  for (int i = 0; i < MODEL_WINDOW; i++) {
+    const float d = winDist[i], l = winLight[i];
+    dSum += d; lSum += l;
+    if (d < dMin) dMin = d;
+    if (d > dMax) dMax = d;
+    if (l < lMin) lMin = l;
+    if (l > lMax) lMax = l;
+  }
+
+  f.d_dist_mm_mean = dSum / MODEL_WINDOW;
+  f.d_ldr_mean     = lSum / MODEL_WINDOW;
+
+  float dVar = 0, lVar = 0;
+  for (int i = 0; i < MODEL_WINDOW; i++) {
+    const float dd = winDist[i]  - f.d_dist_mm_mean;
+    const float dl = winLight[i] - f.d_ldr_mean;
+    dVar += dd * dd;
+    lVar += dl * dl;
+  }
+  // Population standard deviation, matching numpy's default ddof=0.
+  f.d_dist_mm_std = sqrtf(dVar / MODEL_WINDOW);
+  f.d_ldr_std     = sqrtf(lVar / MODEL_WINDOW);
+
+  f.d_dist_mm_min = dMin; f.d_dist_mm_max = dMax;
+  f.d_ldr_min     = lMin; f.d_ldr_max     = lMax;
+  return true;
 }
 
 // ---- display ------------------------------------------------------------
@@ -256,29 +324,41 @@ void render(const Sample &s, Verdict vd, Verdict vl) {
     return;
   }
 
-  // Distance, top half.
+  // Live readings, small, at the top.
   display.setTextSize(1);
   display.setCursor(0, 0);
-  display.print(F("DIST ")); display.print(refMm / 10.0f, 0); display.print(F("cm"));
-  display.setCursor(74, 0);
+  display.print(F("D "));
   if (s.distMm > 0) display.print(s.distMm / 10.0f, 0); else display.print(F("--"));
   display.print(F("cm"));
-  printCentred(distanceWord(vd), 2, 9);
-  drawBar(26, s.distMm, refMm, 200.0f);
+  display.setCursor(66, 0);
+  display.print(F("L ")); display.print(s.light);
 
-  display.drawFastHLine(0, 31, 128, SSD1306_WHITE);
+  // The model's verdict is the headline. This is the on-device inference the
+  // whole project exists to demonstrate, so it gets the largest text.
+  if (modelClass >= 0) {
+    printCentred(className(modelClass), 2, 11);
+  } else {
+    printCentred("filling...", 1, 15);
+  }
 
-  // Light, bottom half.
+  display.drawFastHLine(0, 30, 128, SSD1306_WHITE);
+
+  // The threshold rule underneath, so both methods are visible at once and can
+  // be watched disagreeing. That comparison is the point of showing it at all.
   display.setTextSize(1);
-  display.setCursor(0, 33);
-  display.print(F("LGHT ")); display.print(refLight);
-  display.setCursor(80, 33);
-  display.print(s.light);
-  printCentred(lightWord(vl), 2, 42);
-  // Span is a quarter of the reference, so the marker reaches an end at the
-  // same proportional deviation whatever the light level - matching the
-  // proportional tolerance band.
-  drawBar(59, (float)s.light, (float)refLight, refLight * 0.25f);
+  display.setCursor(0, 34);
+  display.print(F("rule "));
+  display.print(distanceWord(vd));
+  display.print('/');
+  display.print(lightWord(vl));
+
+  display.setCursor(0, 45);
+  display.print(F("ref "));
+  display.print(refMm / 10.0f, 0); display.print(F("cm "));
+  display.print(refLight);
+
+  drawBar(56, s.distMm, refMm, 200.0f);
+  drawBar(60, (float)s.light, (float)refLight, refLight * 0.25f);
 
   display.display();
 }
@@ -526,9 +606,11 @@ void doSave() {
   }
 
   // Forget both histories so the new setup earns its verdicts from scratch and
-  // CORRECT chirps on arrival rather than sliding in silently.
+  // CORRECT chirps on arrival rather than sliding in silently. The classifier's
+  // window goes too - every value in it is a deviation from the old reference.
   prevDist  = V_NO_READ;
   prevLight = V_NO_READ;
+  resetWindow();
 }
 
 // ---- labelled capture ---------------------------------------------------
@@ -684,7 +766,7 @@ void setup() {
 
   runDecisionSelfTest(Serial);
   selfTestReported = (bool)Serial;
-  Serial.println(F("ref_mm,live_mm,diff_mm,dist_verdict,missed,ref_ldr,live_ldr,diff_ldr,light_verdict"));
+  Serial.println(F("ref_mm,live_mm,diff_mm,dist_verdict,missed,ref_ldr,live_ldr,diff_ldr,light_verdict,model_class"));
 }
 
 void loop() {
@@ -694,7 +776,7 @@ void loop() {
   // a monitor, not only if you win a race against the board.
   if (!selfTestReported && Serial) {
     runDecisionSelfTest(Serial);
-    Serial.println(F("ref_mm,live_mm,diff_mm,dist_verdict,missed,ref_ldr,live_ldr,diff_ldr,light_verdict"));
+    Serial.println(F("ref_mm,live_mm,diff_mm,dist_verdict,missed,ref_ldr,live_ldr,diff_ldr,light_verdict,model_class"));
     selfTestReported = true;
   }
 
@@ -713,6 +795,15 @@ void loop() {
     vd = decideDistance(s.distMm, refMm, prevDist);
     vl = decideLight(lightReadingValid(s.light) ? (float)s.light : -1.0f,
                      (float)refLight, prevLight);
+
+    // Feed the classifier only readings it could have been trained on. A failed
+    // echo was dropped from the dataset rather than interpolated, so pushing one
+    // here would put the model somewhere its training data never went.
+    if (s.distMm > 0 && lightReadingValid(s.light)) {
+      pushWindow(s.distMm - refMm, (float)(s.light - refLight));
+      Features f;
+      if (computeFeatures(f)) modelClass = classify(f);
+    }
   }
 
   render(s, vd, vl);
