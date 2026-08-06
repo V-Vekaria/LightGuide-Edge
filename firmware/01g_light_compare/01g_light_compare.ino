@@ -44,6 +44,36 @@ int ambMin = 99999, ambMax = -1;
 // that the eye never sees.
 const unsigned long AVG_WINDOW_MS = 100;
 
+// Give the APDS a fair fight.
+//
+// Arduino_APDS9960 fixes 16x gain and a ~10 ms integration window in begin(),
+// and keeps setCONTROL/setATIME private. At the light levels in this room that
+// leaves the clear channel returning single digits - roughly 50% noise - so it
+// would lose this comparison for reasons that have nothing to do with whether
+// it is the right sensor for the job. Comparing a throttled sensor against a
+// free-running one is not evidence.
+//
+// So write the two registers directly. The on-board sensors sit on Wire1, not
+// on A4/A5, and APDS.begin() has already initialised that bus by this point.
+//
+//   CONTROL 0x8F, bits 1:0 = AGAIN : 0b11 = 64x  (was 0b10 = 16x)
+//   ATIME   0x81           : integration = (256 - ATIME) * 2.78 ms
+//                            219 -> ~103 ms      (was ~10 ms)
+//
+// Together that is about 40x more counts. If the top of the sweep saturates,
+// that is itself a finding worth recording rather than a failed test.
+void boostApdsSensitivity() {
+  Wire1.beginTransmission(0x39);
+  Wire1.write(0x8F);
+  Wire1.write(0x03);
+  Wire1.endTransmission();
+
+  Wire1.beginTransmission(0x39);
+  Wire1.write(0x81);
+  Wire1.write(219);
+  Wire1.endTransmission();
+}
+
 int readLdr() {
   unsigned long t0 = millis();
   unsigned long acc = 0;
@@ -62,8 +92,10 @@ void setup() {
   pinMode(PIN_SWITCH, INPUT_PULLUP);
   Wire.begin();
   apdsOk = APDS.begin();
+  if (apdsOk) boostApdsSensitivity();
   oledOk = display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
   if (oledOk) display.setTextColor(SSD1306_WHITE);
+  Serial.println(F("# APDS boosted: gain 64x, integration ~103 ms"));
   Serial.println(F("ldr,ldr_swing,apds,apds_swing"));
 }
 
