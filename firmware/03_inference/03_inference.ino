@@ -25,6 +25,7 @@ const int PIN_TRIG   = 2;
 const int PIN_ECHO   = 3;
 const int PIN_SWITCH = 7;
 const int PIN_BUZZ   = 9;
+const int PIN_LDR    = A0;
 
 // ---- ultrasonic ---------------------------------------------------------
 const int ULTRA_SAMPLES = 5;
@@ -56,6 +57,10 @@ float   refMm       = DEFAULT_REF_MM;
 Verdict prevVerdict = V_NO_READ;
 bool    switchFaulty = false;
 
+// Scaffolding for this task only - emit() takes the whole Sample once the light
+// channel gets its own CSV columns in Task 4.
+int     s_lastLight  = 0;
+
 Adafruit_SSD1306 display(128, 64, &Wire, -1);
 bool oledOk = false;
 
@@ -65,6 +70,13 @@ bool          correctChirpDone = false;
 
 // True once the self-test result has actually reached an attached host.
 bool selfTestReported = false;
+
+// One loop's worth of sensing from both channels.
+struct Sample {
+  float distMm;   // millimetres, or -1 if every ping failed
+  int   missed;   // failed pings out of ULTRA_SAMPLES
+  int   light;    // mean LDR counts, 0-4095
+};
 
 float pingOnce() {
   digitalWrite(PIN_TRIG, LOW);  delayMicroseconds(4);
@@ -80,26 +92,51 @@ float pingOnce() {
   return (mm < DIST_MIN_MM || mm > DIST_MAX_MM) ? -1 : mm;
 }
 
-// Median of 5. Ultrasonic errors are wild outliers, not gaussian noise, so one
-// bad echo would drag a mean badly while a median simply ignores it.
-float readDistanceMm(int &missed) {
+// Read the LDR continuously for `ms`, accumulating into the caller's totals.
+//
+// This runs in the gap the ultrasonic must leave between pings anyway, so the
+// light channel costs no loop time at all. Spreading five short windows across
+// the ping train also rejects 100 Hz mains ripple and PWM dimmer chop better
+// than one contiguous window of the same total length would.
+void accumulateLdr(unsigned long ms, unsigned long &acc, unsigned long &count) {
+  unsigned long t0 = millis();
+  while (millis() - t0 < ms) {
+    acc += analogRead(PIN_LDR);
+    count++;
+  }
+}
+
+// Median of 5 for distance. Ultrasonic errors are wild outliers, not gaussian
+// noise, so one bad echo would drag a mean badly while a median ignores it.
+// Light is a mean, because its noise genuinely is small and symmetric.
+Sample sense() {
+  Sample s;
   float v[ULTRA_SAMPLES];
   int n = 0;
-  missed = 0;
+  s.missed = 0;
+
+  unsigned long ldrAcc = 0, ldrCount = 0;
 
   for (int i = 0; i < ULTRA_SAMPLES; i++) {
     float d = pingOnce();
-    if (d > 0) v[n++] = d; else missed++;
-    delay(PING_GAP_MS);
+    if (d > 0) v[n++] = d; else s.missed++;
+    accumulateLdr(PING_GAP_MS, ldrAcc, ldrCount);
   }
-  if (n == 0) return -1;
+
+  s.light = ldrCount ? (int)(ldrAcc / ldrCount) : 0;
+
+  if (n == 0) {
+    s.distMm = -1;
+    return s;
+  }
 
   for (int i = 1; i < n; i++) {
     float k = v[i]; int j = i - 1;
     while (j >= 0 && v[j] > k) { v[j + 1] = v[j]; j--; }
     v[j + 1] = k;
   }
-  return v[n / 2];
+  s.distMm = v[n / 2];
+  return s;
 }
 
 // One CSV row per loop. This is the log the online evaluation is computed from
@@ -116,7 +153,9 @@ void emit(float liveMm, Verdict v, int missed) {
   Serial.print(',');
   Serial.print(distanceWord(v));
   Serial.print(',');
-  Serial.println(missed);
+  Serial.print(missed);
+  Serial.print(',');
+  Serial.println(s_lastLight);
 }
 
 // ---- display ------------------------------------------------------------
@@ -281,8 +320,8 @@ float captureReference() {
   int n = 0;
 
   for (int i = 0; i < REF_SAMPLES; i++) {
-    int missed = 0;
-    float d = readDistanceMm(missed);
+    Sample smp = sense();
+    float d = smp.distMm;
     if (d > 0) v[n++] = d;
 
     if (oledOk) {
@@ -372,6 +411,11 @@ void setup() {
   pinMode(PIN_ECHO, INPUT);
   digitalWrite(PIN_TRIG, LOW);
 
+  // 12-bit, not the 10-bit default. Every light band is a percentage of the
+  // reference, so a quarter-scale reading would not be wrong by a constant -
+  // it would quietly change what the percentages mean.
+  analogReadResolution(12);
+
   Wire.begin();
   oledOk = display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
   if (oledOk) display.setTextColor(SSD1306_WHITE);
@@ -415,8 +459,10 @@ void loop() {
     return;
   }
 
-  int missed = 0;
-  float liveMm = readDistanceMm(missed);
+  Sample s = sense();
+  float liveMm = s.distMm;
+  int   missed = s.missed;
+  s_lastLight  = s.light;
   Verdict v = decideDistance(liveMm, refMm, prevVerdict);
 
   render(liveMm, v, missed);
