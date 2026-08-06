@@ -52,16 +52,24 @@ REPORTS = ROOT / "reports"
 FIGURES = REPORTS / "figures"
 MODELS = ROOT / "models"
 
-CLASS_NAMES = ["optimal", "too_close", "too_far", "underlit", "overlit", "tilt_off"]
+CLASS_NAMES = ["optimal", "too_close", "too_far", "underlit", "overlit"]
 
-WINDOW = 10       # 10 samples at 10 Hz = 1 second
+WINDOW = 10       # 10 samples at ~8 Hz = ~1.3 seconds
 STRIDE = 5        # 50% overlap, applied within a run only
 
-CHANNELS = ["dist_mm", "ldr_raw", "pitch", "roll"]
+# Deviations from the saved reference, not absolute readings.
+#
+# This is the decision that makes the model match the product. `optimal` is not
+# "1308 mm" - it is "at whatever the operator saved". Training on absolutes would
+# produce a model that only works at one setup and breaks the moment the
+# reference button is pressed. The three sessions deliberately use three
+# different references (1308, 876 and 897 mm), so a model that had learned
+# absolute positions could not possibly generalise across them.
+CHANNELS = ["d_dist_mm", "d_ldr"]
 SENSOR_GROUPS = {                      # for the ablation study
-    "ultrasonic only":      ["dist_mm"],
-    "ultrasonic + LDR":     ["dist_mm", "ldr_raw"],
-    "ultrasonic + LDR + IMU": ["dist_mm", "ldr_raw", "pitch", "roll"],
+    "distance only":      ["d_dist_mm"],
+    "light only":         ["d_ldr"],
+    "distance + light":   ["d_dist_mm", "d_ldr"],
 }
 
 
@@ -75,7 +83,9 @@ def load_raw() -> pd.DataFrame:
         raise SystemExit(f"No capture files in {RAW}. Run tools/capture.py first.")
     frames = []
     for f in files:
-        df = pd.read_csv(f)
+        # Each capture carries its reference on a leading `#` line, so the file
+        # is self-describing; pandas skips it.
+        df = pd.read_csv(f, comment="#")
         df["run"] = f.stem          # the grouping key for GroupKFold
         frames.append(df)
     return pd.concat(frames, ignore_index=True)
@@ -84,13 +94,17 @@ def load_raw() -> pd.DataFrame:
 def clean(df: pd.DataFrame) -> pd.DataFrame:
     """Range-gate the ultrasonic channel and bridge short gaps within a run."""
     df = df.copy()
-    df.loc[df["dist_mm"] < 0, "dist_mm"] = np.nan
-    # Bridge up to 2 consecutive failed echoes (200 ms); longer gaps are dropped
+    # A failed echo is written as -1 in dist_mm and NA in d_dist_mm. Both have to
+    # go, or the deviation column keeps a value derived from a reading that never
+    # happened.
+    df.loc[df["dist_mm"] < 0, ["dist_mm", "d_dist_mm"]] = np.nan
+    # Bridge up to 2 consecutive failed echoes (~250 ms); longer gaps are dropped
     # rather than invented.
-    df["dist_mm"] = df.groupby("run")["dist_mm"].transform(
-        lambda s: s.ffill(limit=2).bfill(limit=2))
+    for col in ("dist_mm", "d_dist_mm"):
+        df[col] = df.groupby("run")[col].transform(
+            lambda s: s.ffill(limit=2).bfill(limit=2))
     before = len(df)
-    df = df.dropna(subset=["dist_mm"])
+    df = df.dropna(subset=["dist_mm", "d_dist_mm"])
     dropped = before - len(df)
     if dropped:
         print(f"  dropped {dropped} rows ({100*dropped/before:.1f}%) with unrecoverable echo gaps")
@@ -140,8 +154,15 @@ def build_models(seed: int) -> dict[str, object]:
         "M0b k-NN (k=5)":          KNeighborsClassifier(n_neighbors=5),
         "M0c Logistic Regression": LogisticRegression(max_iter=2000, random_state=seed),
         "M0d Random Forest":       RandomForestClassifier(n_estimators=100, random_state=seed),
-        "M1  MLP (32-16)":         MLPClassifier(hidden_layer_sizes=(32, 16), max_iter=1500,
-                                                 early_stopping=True, random_state=seed),
+        # early_stopping is deliberately OFF. It reserves 10% of training data as
+        # an internal validation split, which on ~200 windows across 5 classes is
+        # about 19 samples - too few to measure improvement against, so the net
+        # stops after n_iter_no_change before it has learned anything. With it on,
+        # this model scored macro-F1 0.064, well below the 0.20 that guessing
+        # gives. Generalisation is protected by the held-out session and grouped
+        # CV, not by an internal split this small.
+        "M1  MLP (32-16)":         MLPClassifier(hidden_layer_sizes=(32, 16), max_iter=3000,
+                                                 early_stopping=False, random_state=seed),
     }
 
 
@@ -296,7 +317,7 @@ def main() -> None:
                      f"{np.mean(accs):.3f} ± {np.std(accs):.3f} | "
                      f"{np.mean(f1s):.3f} ± {np.std(f1s):.3f} |")
 
-        cm = confusion_matrix(yte, best_pred, labels=range(6))
+        cm = confusion_matrix(yte, best_pred, labels=range(len(CLASS_NAMES)))
         slug = name.split()[0].lower()
         plot_confusion(cm, f"{name} - held-out session {args.test_session}",
                        FIGURES / f"confusion_{slug}.png")
@@ -356,7 +377,7 @@ def main() -> None:
     m = build_models(0)[best]
     m.fit(Xtr, ytr)
     lines += [f"## Per-class detail - {best}", "", "```",
-              classification_report(yte, m.predict(Xte), labels=range(6),
+              classification_report(yte, m.predict(Xte), labels=range(len(CLASS_NAMES)),
                                     target_names=CLASS_NAMES, zero_division=0), "```", ""]
 
     (REPORTS / "offline_results.md").write_text("\n".join(lines), encoding="utf-8")

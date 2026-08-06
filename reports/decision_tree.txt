@@ -1,0 +1,13 @@
+|--- d_dist_mm_mean <= -0.26
+|   |--- class: 1
+|--- d_dist_mm_mean >  -0.26
+|   |--- d_ldr_min <= -0.30
+|   |   |--- class: 3
+|   |--- d_ldr_min >  -0.30
+|   |   |--- d_ldr_min <= 0.34
+|   |   |   |--- d_dist_mm_min <= 0.27
+|   |   |   |   |--- class: 0
+|   |   |   |--- d_dist_mm_min >  0.27
+|   |   |   |   |--- class: 2
+|   |   |--- d_ldr_min >  0.34
+|   |   |   |--- class: 4
