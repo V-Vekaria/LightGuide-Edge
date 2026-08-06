@@ -678,9 +678,16 @@ void recordRun() {
   silenceBuzzer();
   digitalWrite(LEDR, HIGH); digitalWrite(LEDG, HIGH); digitalWrite(LEDB, LOW);
 
+  // The warm-up also fills the classifier's window, so the first recorded row
+  // already carries a real prediction rather than NA.
   unsigned long t0 = millis();
   while (millis() - t0 < RUN_WARMUP_MS) {
-    sense();
+    Sample w = sense();
+    if (w.distMm > 0 && lightReadingValid(w.light)) {
+      pushWindow(w.distMm - refMm, (float)(w.light - refLight));
+      Features f;
+      if (computeFeatures(f)) modelClass = classify(f);
+    }
     renderRun("WARMUP", 0);
   }
 
@@ -691,13 +698,23 @@ void recordRun() {
   Serial.print(F(" name="));               Serial.print(CLASS_NAMES[labelIdx]);
   Serial.print(F(" ref_mm="));             Serial.print(refMm, 0);
   Serial.print(F(" ref_ldr="));            Serial.println(refLight);
-  Serial.println(F("t_ms,dist_mm,d_dist_mm,ldr,d_ldr,missed,label,session"));
+  // `pred` is the model's live verdict at the moment the row was recorded, and
+  // `label` is the condition the operator actually staged. One file therefore
+  // carries both sides of a confusion matrix, measured on the device rather than
+  // reconstructed afterwards.
+  Serial.println(F("t_ms,dist_mm,d_dist_mm,ldr,d_ldr,missed,label,session,pred"));
 
   int rows = 0, dropouts = 0;
   t0 = millis();
   while (millis() - t0 < RUN_RECORD_MS) {
     Sample s = sense();
     if (s.distMm < 0) dropouts++;
+
+    if (s.distMm > 0 && lightReadingValid(s.light)) {
+      pushWindow(s.distMm - refMm, (float)(s.light - refLight));
+      Features f;
+      if (computeFeatures(f)) modelClass = classify(f);
+    }
 
     Serial.print(millis() - t0);        Serial.print(',');
     Serial.print(s.distMm, 0);          Serial.print(',');
@@ -707,7 +724,8 @@ void recordRun() {
     Serial.print(s.light - refLight);   Serial.print(',');
     Serial.print(s.missed);             Serial.print(',');
     Serial.print(labelIdx);             Serial.print(',');
-    Serial.println(sessionId);
+    Serial.print(sessionId);            Serial.print(',');
+    Serial.println(modelClass);
 
     rows++;
     renderRun("REC", rows);
