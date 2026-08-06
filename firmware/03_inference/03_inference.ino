@@ -12,12 +12,19 @@
  * stays as it is.
  */
 
+#include <string.h>          // strlen, used by printCentred
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
 #include "decision.h"
 #include "self_test.h"
 
 // ---- pins (docs/02-HARDWARE.md) ----------------------------------------
 const int PIN_TRIG   = 2;
 const int PIN_ECHO   = 3;
+const int PIN_SWITCH = 7;
+const int PIN_BUZZ   = 9;
 
 // ---- ultrasonic ---------------------------------------------------------
 const int ULTRA_SAMPLES = 5;
@@ -37,6 +44,13 @@ enum Mode { MODE_GUIDE, MODE_SETUP };
 Mode    mode        = MODE_GUIDE;
 float   refMm       = DEFAULT_REF_MM;
 Verdict prevVerdict = V_NO_ECHO;
+
+Adafruit_SSD1306 display(128, 64, &Wire, -1);
+bool oledOk = false;
+
+bool          buzzerOn         = false;
+unsigned long buzzerPhaseStart = 0;
+bool          correctChirpDone = false;
 
 // True once the self-test result has actually reached an attached host.
 bool selfTestReported = false;
@@ -94,6 +108,137 @@ void emit(float liveMm, Verdict v, int missed) {
   Serial.println(missed);
 }
 
+// ---- display ------------------------------------------------------------
+
+// The Adafruit font is 6 px wide per character at size 1, so the pixel width of
+// a string is length * 6 * size. Centring by hand would have to be redone every
+// time a word changed length.
+void printCentred(const char *s, int size, int y) {
+  int w = (int)strlen(s) * 6 * size;
+  int x = (128 - w) / 2;
+  if (x < 0) x = 0;
+  display.setTextSize(size);
+  display.setCursor(x, y);
+  display.print(s);
+}
+
+// A ruler. The reference sits at the centre tick and the live reading slides
+// along it. Full width spans +-200 mm, wide enough to watch yourself approach
+// without the marker pinned to an end for most of the walk.
+void drawBar(float liveMm) {
+  const int BAR_Y = 56, BAR_H = 8;
+  display.drawRect(0, BAR_Y, 128, BAR_H, SSD1306_WHITE);
+  display.drawFastVLine(64, BAR_Y, BAR_H, SSD1306_WHITE);
+
+  if (liveMm <= 0) return;
+
+  int x = 64 + (int)((liveMm - refMm) * 64.0f / 200.0f);
+  if (x < 2)   x = 2;
+  if (x > 125) x = 125;
+  display.fillRect(x - 1, BAR_Y + 2, 3, BAR_H - 4, SSD1306_WHITE);
+}
+
+void render(float liveMm, Verdict v, int missed) {
+  if (!oledOk) return;
+  display.clearDisplay();
+
+  // What we are aiming for, and what we have.
+  display.setTextSize(1);
+  display.setCursor(0, 0);
+  display.print(F("REF ")); display.print(refMm / 10.0f, 0); display.print(F("cm"));
+  display.setCursor(68, 0);
+  display.print(F("NOW "));
+  if (liveMm > 0) display.print(liveMm / 10.0f, 0); else display.print(F("--"));
+
+  // The verdict, as large as the panel allows. CORRECT at size 3 is 126 px of
+  // the 128 available - if it clips on the hardware, drop this one call to 2.
+  printCentred(v == V_NO_ECHO ? "NO ECHO" : verdictName(v), 3, 18);
+
+  // How far out, and which way to move.
+  display.setTextSize(1);
+  display.setCursor(0, 46);
+  if (v == V_NO_ECHO) {
+    display.print(F("aim at target"));
+  } else {
+    float diffCm = (liveMm - refMm) / 10.0f;
+    if (diffCm >= 0) display.print('+');
+    display.print(diffCm, 0);
+    display.print(F("cm "));
+    if      (v == V_FAR)   display.print(F("move closer"));
+    else if (v == V_CLOSE) display.print(F("move back"));
+    else if (missed > 1)   display.print(F("hold it (noisy)"));
+    else                   display.print(F("hold it"));
+  }
+
+  drawBar(liveMm);
+  display.display();
+}
+
+// ---- sound and light ----------------------------------------------------
+
+void silenceBuzzer() {
+  noTone(PIN_BUZZ);
+  buzzerOn = false;
+}
+
+// Rate encodes urgency, pitch encodes direction, and CORRECT is silent after a
+// single chirp. Silence-means-success is the parking-sensor convention, and it
+// is also practical: a continuous tone would cover the narration in the video.
+//
+// Every transition is scheduled off millis(). Sounding a tone with delay() would
+// block the loop and make the display lag the sensor by the length of the beep.
+void updateBuzzer(Verdict v, bool verdictChanged) {
+  unsigned long now = millis();
+
+  if (verdictChanged) {
+    silenceBuzzer();
+    buzzerPhaseStart = now;
+    correctChirpDone = false;
+  }
+
+  if (v == V_NO_ECHO) {
+    silenceBuzzer();
+    return;
+  }
+
+  if (v == V_CORRECT) {
+    if (correctChirpDone) return;
+    if (!buzzerOn) {
+      tone(PIN_BUZZ, 1500);
+      buzzerOn = true;
+      buzzerPhaseStart = now;
+    } else if (now - buzzerPhaseStart >= 150) {
+      silenceBuzzer();
+      correctChirpDone = true;
+    }
+    return;
+  }
+
+  const unsigned int  freq  = (v == V_FAR) ? 400 : 1200;
+  const unsigned long onMs  = (v == V_FAR) ? 80  : 60;
+  const unsigned long perMs = (v == V_FAR) ? 600 : 200;
+
+  unsigned long phase = now - buzzerPhaseStart;
+  if (phase >= perMs) {
+    buzzerPhaseStart = now;
+    phase = 0;
+  }
+
+  if (phase < onMs) {
+    if (!buzzerOn) { tone(PIN_BUZZ, freq); buzzerOn = true; }
+  } else {
+    if (buzzerOn) silenceBuzzer();
+  }
+}
+
+// The on-board RGB LED is active LOW, so LOW turns a channel on. It needs no
+// wiring and it is the output that actually reads on camera across a room.
+void updateLed(Verdict v) {
+  digitalWrite(LEDR, (v == V_FAR || v == V_CLOSE) ? LOW : HIGH);
+  digitalWrite(LEDG, (v == V_CORRECT)             ? LOW : HIGH);
+  digitalWrite(LEDB, HIGH);
+}
+
 void setup() {
   Serial.begin(115200);
   while (!Serial && millis() < 3000) { }
@@ -101,6 +246,15 @@ void setup() {
   pinMode(PIN_TRIG, OUTPUT);
   pinMode(PIN_ECHO, INPUT);
   digitalWrite(PIN_TRIG, LOW);
+
+  Wire.begin();
+  oledOk = display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+  if (oledOk) display.setTextColor(SSD1306_WHITE);
+  else        Serial.println(F("# OLED not found at 0x3C - continuing without it"));
+
+  pinMode(PIN_BUZZ, OUTPUT);
+  pinMode(LEDR, OUTPUT); pinMode(LEDG, OUTPUT); pinMode(LEDB, OUTPUT);
+  digitalWrite(LEDR, HIGH); digitalWrite(LEDG, HIGH); digitalWrite(LEDB, HIGH);
 
   runDecisionSelfTest(Serial);
   selfTestReported = (bool)Serial;
@@ -122,6 +276,10 @@ void loop() {
   float liveMm = readDistanceMm(missed);
   Verdict v = decide(liveMm, refMm, prevVerdict);
 
+  render(liveMm, v, missed);
+  updateBuzzer(v, v != prevVerdict);
+  updateLed(v);
   emit(liveMm, v, missed);
+
   prevVerdict = v;
 }
