@@ -88,7 +88,7 @@ arduino-cli upload -p COM4 --fqbn arduino:mbed_nano:nano33ble firmware/<NAME>
 | `01d_output_test` | Buzzer, LED, switch. |
 | `01e_acceptance` | **Gate G0 full acceptance test.** Run after any wiring change. |
 | `02_data_logger` | Required before `tools/capture.py`. Labelled 10 Hz capture. |
-| `03_inference` | ✅ **The product.** Distance guide: CORRECT / FAR / CLOSE against a held reference, on OLED + buzzer + LED. Hold D7 for 2 s to set a new reference. Phase 1 decides by threshold; the classifier replaces `decide()` in Phase 2. |
+| `03_inference` | ✅ **The product.** Distance **and** light checked against one saved setup. Boots to `NO SETUP SAVED`; hold D7 for 2 s to capture both references. Two-row OLED, buzzer priority distance-then-light, LED green/red/blue. Decides by threshold; the classifier replaces `decide()` in Phase 3. |
 
 To watch serial output without a Python tool:
 
