@@ -144,18 +144,33 @@ a reading parked on the boundary cannot flip the verdict repeatedly.
 
 ## 4. References
 
-### 4.1 Distance keeps a fixed default; light captures at boot
+### 4.1 There are no defaults. The device is either set up or it is not.
 
-`DEFAULT_REF_MM = 1000` stays. 100 cm is the operator's real working distance, so it is a
-meaningful constant.
+**Revised 6 August, on the operator's design input, and it replaces `DEFAULT_REF_MM` entirely.**
 
-**There is no equivalent constant for light.** The right ADC count depends entirely on the room,
-the lamp and the LDR's placement — 2000 counts means nothing in the abstract. So the light
-reference is captured from the first valid reading at power-up and printed to serial.
+The first draft gave distance a hardcoded 100 cm default and had light self-reference at
+power-up. That was inconsistent — two channels behaving differently at boot for reasons that
+took a paragraph to justify — and the operator rightly did not accept it.
 
-The principle is the same one that justified `DEFAULT_REF_MM`: the device must be useful the
-instant it powers up. For distance that means a constant; for light it means self-referencing.
-The button overrides both.
+The device now has exactly two states:
+
+| State | Screen | Verdicts | Buzzer |
+|---|---|---|---|
+| `UNSET` — no setup captured | `NO SETUP SAVED` / `hold button 2s` plus both live readings | none | silent |
+| `ARMED` — a setup is held | the two-row guide display | both | per §5.2 |
+
+Nothing is guessed. A reference exists because the operator captured it, or it does not exist
+and the device says so plainly. That is one rule covering both channels, and it removes the need
+for a universal "correct" light level, which does not exist — the right ADC count depends
+entirely on the room, the lamp and where the LDR sits.
+
+In `UNSET` the live distance and light readings are still shown, so the rig can be positioned
+and the lamp dialled in *before* capturing. This is what the dropped SETUP mode was for in Phase
+1, now folded into the state the device is already in.
+
+**This shape is deliberate groundwork for Phase 2b (persistence).** Once the setup is written to
+flash, boot becomes: load from flash if a valid setup is stored, otherwise `UNSET`. No other
+behaviour changes — which is the point of adopting the model now rather than retrofitting it.
 
 ### 4.2 The button saves both channels together
 
@@ -176,6 +191,8 @@ divider, which is precisely the fault diagnosed in §1.1. **This check would hav
 
 ### 5.1 OLED — two halves, both always visible
 
+**`ARMED`:**
+
 ```
 DIST 100cm    now 104cm     <- size 1, y=0
       FAR                   <- size 2, y=9, centred
@@ -185,6 +202,19 @@ LGHT 2568     now 1840      <- size 1, y=33
       DARK                  <- size 2, y=42, centred
   [== |=====]               <- 4 px bar, y=59
 ```
+
+**`UNSET`:**
+
+```
+   NO SETUP SAVED           <- size 1, y=0, centred
+   hold button 2s           <- size 1, y=10, centred
+────────────────────────    <- rule, y=22
+  dist   104 cm             <- size 2, y=28
+  light 1840                <- size 2, y=46
+```
+
+The live readings are deliberately large in `UNSET` — that screen's job is to help the operator
+position the rig and set the lamp before capturing, so the numbers are the content.
 
 Verdicts drop from size 3 to size 2 — 12 px per character, still clearly readable on camera.
 `CORRECT` is 84 px of the available 128, so neither channel can clip.
@@ -200,6 +230,7 @@ Evaluated strictly in this order; the first matching rule wins:
 
 | # | Condition | Sound |
 |---|---|---|
+| 0 | State is `UNSET` | **silent** — there is nothing to guide towards |
 | 1 | Distance is `V_NO_READ` | **silent** — no echo means no guidance to give |
 | 2 | Distance is `V_ABOVE` / `V_BELOW` | distance pattern — 400 Hz / 80 ms every 600 ms (FAR), 1200 Hz / 60 ms every 200 ms (CLOSE) |
 | 3 | Distance CORRECT, light is `V_NO_READ` | **silent** — a clipped divider is not a light verdict |
@@ -219,6 +250,7 @@ All timing remains scheduled from `millis()`. No `delay()` in the loop path.
 
 | State | Colour |
 |---|---|
+| `UNSET` | off |
 | Both CORRECT | green |
 | Distance wrong | red |
 | Distance CORRECT, light wrong | blue |
@@ -237,7 +269,7 @@ Header printed once at boot and again when a host attaches. Reference changes an
 `#` comment lines:
 
 ```
-# LIGHT REFERENCE AUTO-SET 1874 counts
+# UNSET - no setup captured, hold the button to set one
 # REFERENCE SAVED 872 mm / 2103 counts
 # SAVE REFUSED - not enough valid echoes
 # SAVE REFUSED - light reading clipped (4095)
@@ -269,8 +301,10 @@ leaving CORRECT, `V_ABOVE`/`V_BELOW` polarity for light, and clipped-reading rej
 
 **On hardware**, against the rig:
 
-1. Distance channel still behaves exactly as Phase 1 — regression check.
-2. Hold button: both references saved, both read CORRECT immediately after.
+1. **Boot into `UNSET`** — screen says `NO SETUP SAVED`, both live readings shown and tracking,
+   no verdicts, no beeps, LED off.
+2. Hold button: both references saved, state becomes `ARMED`, both read CORRECT immediately
+   after.
 3. Dimmer up one notch → `BRIGHT`, blue LED, double-blip at 1000 Hz.
 4. Dimmer down one notch → `DARK`, blue LED, double-blip at 500 Hz.
 5. Cover the LDR → `DARK`, recovering when uncovered.
@@ -287,10 +321,19 @@ Measured values recorded to `reports/phase2_light_acceptance.md`.
 ## 9. Out of scope
 
 - **Tilt / IMU** — dropped from the product. The two checks are distance and light.
-- **Flash persistence** — references remain in RAM.
 - **The classifier** — arrives at the `decide()` swap point in Phase 3.
 - **Distance beam-ambiguity filter** — identified in the Phase 1 report §9, still not
   implemented, still worth doing.
+
+**Flash persistence is no longer out of scope — it is the next phase.** It is not in *this*
+spec because the setup must exist before it can be stored, but §4.1's `UNSET`/`ARMED` model was
+adopted specifically so Phase 2b adds only "try loading from flash at boot" and "write to flash
+on save", changing nothing else. `Arduino_CRC32` is already installed and will checksum the
+stored block so a half-completed write can never be loaded as a valid reference.
+
+**Multiple saved setups** — recalling one of several stored configurations — is deliberately not
+planned. One setup, loaded automatically, covers the stated use case. Multiple presets belong on
+the future-work slide.
 
 ---
 
