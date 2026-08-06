@@ -27,6 +27,17 @@ const unsigned long ECHO_HIGH_MAX_US      = 25000UL;
 const float DIST_MIN_MM = 20.0f;
 const float DIST_MAX_MM = 4000.0f;
 
+// ---- reference ----------------------------------------------------------
+// 100 cm is the operator's established working distance, so the device is
+// useful the instant it powers up and a faulty switch cannot leave it unusable.
+const float DEFAULT_REF_MM = 1000.0f;
+
+enum Mode { MODE_GUIDE, MODE_SETUP };
+
+Mode    mode        = MODE_GUIDE;
+float   refMm       = DEFAULT_REF_MM;
+Verdict prevVerdict = V_NO_ECHO;
+
 // True once the self-test result has actually reached an attached host.
 bool selfTestReported = false;
 
@@ -66,6 +77,23 @@ float readDistanceMm(int &missed) {
   return v[n / 2];
 }
 
+// One CSV row per loop. This is the log the online evaluation is computed from
+// later, which is why it carries the mode and the raw miss count as well as the
+// verdict - a row that cannot be trusted must be identifiable after the fact.
+void emit(float liveMm, Verdict v, int missed) {
+  Serial.print(mode == MODE_GUIDE ? F("GUIDE") : F("SETUP"));
+  Serial.print(',');
+  Serial.print(refMm, 0);
+  Serial.print(',');
+  Serial.print(liveMm, 0);
+  Serial.print(',');
+  if (liveMm > 0) Serial.print(liveMm - refMm, 0); else Serial.print(F("NA"));
+  Serial.print(',');
+  Serial.print(verdictName(v));
+  Serial.print(',');
+  Serial.println(missed);
+}
+
 void setup() {
   Serial.begin(115200);
   while (!Serial && millis() < 3000) { }
@@ -76,7 +104,7 @@ void setup() {
 
   runDecisionSelfTest(Serial);
   selfTestReported = (bool)Serial;
-  Serial.println(F("live_mm,missed"));
+  Serial.println(F("mode,ref_mm,live_mm,diff_mm,verdict,missed"));
 }
 
 void loop() {
@@ -86,14 +114,14 @@ void loop() {
   // a monitor, not only if you win a race against the board.
   if (!selfTestReported && Serial) {
     runDecisionSelfTest(Serial);
-    Serial.println(F("live_mm,missed"));
+    Serial.println(F("mode,ref_mm,live_mm,diff_mm,verdict,missed"));
     selfTestReported = true;
   }
 
   int missed = 0;
   float liveMm = readDistanceMm(missed);
+  Verdict v = decide(liveMm, refMm, prevVerdict);
 
-  Serial.print(liveMm, 0);
-  Serial.print(',');
-  Serial.println(missed);
+  emit(liveMm, v, missed);
+  prevVerdict = v;
 }
