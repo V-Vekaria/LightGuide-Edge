@@ -88,7 +88,7 @@ arduino-cli upload -p COM4 --fqbn arduino:mbed_nano:nano33ble firmware/<NAME>
 | `01d_output_test` | Buzzer, LED, switch. |
 | `01e_acceptance` | **Gate G0 full acceptance test.** Run after any wiring change. |
 | `02_data_logger` | Required before `tools/capture.py`. Labelled 10 Hz capture. |
-| `03_inference` | ⬜ **The actual product.** Written Tue 5 Aug — needs the trained model first. |
+| `03_inference` | ✅ **The product.** Distance guide: CORRECT / FAR / CLOSE against a held reference, on OLED + buzzer + LED. Hold D7 for 2 s to set a new reference. Phase 1 decides by threshold; the classifier replaces `decide()` in Phase 2. |
 
 To watch serial output without a Python tool:
 
@@ -106,6 +106,19 @@ arduino-cli monitor -p COM4 --config baudrate=115200
 | `tools/capture.py` | Records labelled runs into `data/raw/` | `02_data_logger` |
 | `tools/dataset_report.py` | Gate G2 quality check — fails loudly if the dataset is short or unbalanced | nothing (reads files) |
 | `tools/train_offline.py` | Trains M0–M3, ablation, confusion matrices | nothing (reads files) |
+| `tools/read_serial.ps1` | Captures serial output for N seconds and exits (see note below) | anything |
+
+**Use `read_serial.ps1` when you need to *capture* output rather than watch it.**
+`arduino-cli monitor` is interactive and never returns, so it cannot be scripted or logged:
+
+```bash
+powershell -ExecutionPolicy Bypass -File tools/read_serial.ps1 -Seconds 20
+```
+
+⚠️ If you write your own serial code, **assert DTR**. .NET's `SerialPort` leaves it off by
+default, the Nano's native USB reads that as "no host attached", `while (!Serial)` never
+completes, and the port looks completely dead while the board is running perfectly. That cost
+two debugging rounds on 6 August.
 
 Useful flags:
 
