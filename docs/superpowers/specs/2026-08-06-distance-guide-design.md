@@ -67,9 +67,9 @@ Four units, each with one job:
 | Unit | Responsibility | Depends on |
 |---|---|---|
 | **Sensing** | `pingOnce()`, `readDistanceMm(&missed)` | HC-SR04 pins |
-| **Reference** | capture, validate and hold the reference value | sensing |
-| **Decision** | `decide(live, ref) -> Verdict` | nothing — pure function |
-| **Output** | `render()` OLED, `alert()` buzzer + LED, `emit()` serial | verdict + values |
+| **Reference** | `holdFired()`, `captureReference()`, `doSave()` | sensing |
+| **Decision** | `decide(live, ref, prev) -> Verdict` | nothing — pure function |
+| **Output** | `render()` OLED, `updateBuzzer()` / `updateLed()`, `emit()` serial | verdict + values |
 
 The decision unit takes numbers and returns an enum. It touches no hardware, so it can be
 reasoned about — and later replaced — without disturbing anything else.
@@ -87,40 +87,41 @@ as are echoes that time out.
 count through an out-parameter so the display can distinguish "far away" from "not aimed at
 anything".
 
-### 3.2 Modes
+### 3.2 One mode, one gesture
+
+**Revised 6 August during implementation.** The original design had a separate SETUP mode
+entered by a short press. It was dropped once the guide screen was running: that screen already
+shows the live distance as `NOW xxxcm`, so the aiming display SETUP existed to provide was
+redundant, and a second mode is a second thing to explain and to get wrong on camera.
+
+There is now no mode. The device always guides, and the button always means one thing:
 
 ```
-BOOT ──> GUIDE  (reference pre-loaded at 1000 mm)
-           │  ^              ^
-     short │  │ save         │ short press
-     press │  │ succeeds     │ (cancel, keep old ref)
-           v  │              │
-         SETUP ┴──────────────┘
-           │
-           └──> save fails ──> error tone, stay in SETUP
+BOOT ──> guiding against DEFAULT_REF_MM (1000 mm)
+             │  ^
+   hold 2 s  │  │ save succeeds -> guide against the new reference
+             v  │
+          capture ┘
+             │
+             └──> too few valid echoes ──> error tone, old reference survives
 ```
 
-One button, one gesture per mode — the gesture is never ambiguous because its meaning depends
-on which mode you are already in:
+**Boot loads `DEFAULT_REF_MM = 1000` (100 cm) immediately.** That is the operator's established
+working distance, so the device is useful the instant it powers up and a faulty switch cannot
+leave it unusable.
 
-| Mode | Short press | Hold 2 s |
-|---|---|---|
-| GUIDE | enter SETUP | — |
-| SETUP | cancel, return to GUIDE with the old reference | capture a new reference |
+**Hold, not tap.** A tap is one accidental knock away from silently re-referencing to whatever
+happens to be in front of the sensor, and the operator would not discover it until the verdicts
+stopped making sense — during the video, most likely. Two seconds cannot happen by accident.
 
-**Boot goes straight to GUIDE**, with `DEFAULT_REF_MM = 1000` (100 cm) already loaded. 100 cm
-is the operator's established working distance, so the device is useful the instant it powers
-up, and a faulty switch cannot leave it unusable.
+**Capturing a reference:** 20 readings over roughly 2 s, medianed, with a progress bar on the
+OLED. If fewer than 12 return a valid distance the save is **refused**: the buzzer sounds a low
+error tone, the screen says so, and the previous reference survives untouched. A reference
+captured from a bad echo would corrupt every subsequent verdict while looking exactly like a
+software fault, so it must fail loudly at the point of capture.
 
-**SETUP** shows the live distance large, so the rig can be physically aimed before capturing.
-
-**Capturing a reference:** 20 readings over roughly 2 s, medianed. If fewer than 12 return a
-valid distance, the save is **refused** — the buzzer sounds a low error tone and the mode stays
-SETUP. A reference captured from a bad echo would corrupt every subsequent verdict while
-looking exactly like a software fault, so it must fail loudly at the point of capture.
-
-Because SETUP is one short press away and cancellable, the reference can be reset between video
-takes without unplugging the board.
+After a successful save the verdict history is cleared, so the new reference earns CORRECT from
+scratch and chirps on arrival rather than sliding in silently.
 
 ---
 
@@ -216,15 +217,28 @@ that actually reads on camera from across a room.
 
 ## 6. Serial output
 
-CSV at 10 Hz:
+CSV at roughly 11 Hz (measured):
 
 ```
-mode,ref_mm,live_mm,diff_mm,verdict,missed
+ref_mm,live_mm,diff_mm,verdict,missed
 ```
 
-A header line is printed once at boot. This costs nothing to add now and is the log the
-**online evaluation** is computed from later — `docs/00-REQUIREMENTS-LOCKED.md` §5 identifies
-online evaluation as the single most commonly missing component of this coursework.
+A header line is printed once at boot. Reference changes are marked by a `#` comment line
+rather than a column, so the moment the operator re-referenced stays findable in the log:
+
+```
+# REFERENCE SAVED 872 mm
+# SAVE REFUSED - not enough valid echoes
+# switch stuck LOW - disabled for this run
+```
+
+This costs nothing to add now and is the log the **online evaluation** is computed from later —
+`docs/00-REQUIREMENTS-LOCKED.md` §5 identifies online evaluation as the single most commonly
+missing component of this coursework.
+
+The self-test result is also reprinted the moment a serial host attaches. Booting takes less
+time than uploading and re-enumerating the USB port, so the report in `setup()` otherwise goes
+nowhere and the result is only observable if you win a race against the board.
 
 ---
 
@@ -234,7 +248,7 @@ online evaluation as the single most commonly missing component of this coursewo
 |---|---|
 | All 5 pings fail | `NO_ECHO`; buzzer silent, LED off, OLED says `aim at target` |
 | 2+ of 5 pings miss | verdict still given, OLED shows the miss count as a caution |
-| Reference save gets < 12 valid readings | refuse, error tone, stay in SETUP |
+| Reference save gets < 12 valid readings | refuse, error tone, previous reference survives |
 | OLED absent at boot | `oledOk = false`; serial and buzzer continue working |
 | Switch reads LOW continuously for 3 s at boot | treated as faulty and disabled for the run, so it cannot spam mode changes. The boot reference is already loaded, so the device stays fully usable |
 
@@ -256,11 +270,11 @@ Executed against a tape measure on the physical rig, not in simulation.
    and the buzzer must not chatter.
 5. **No echo** — cover the sensor. `NO ECHO` within one loop, buzzer silent, no crash, and
    recovery when uncovered.
-6. **Re-reference** — short press to enter SETUP, aim at a target at 80 cm, hold D7 for 2 s.
-   Confirm `REF 80cm` and that 80 cm now reads CORRECT while 100 cm reads FAR.
-7. **Refused save** — enter SETUP aimed at open air and attempt a save. Must refuse with the
-   error tone and remain in SETUP. A following short press must cancel back to GUIDE with the
-   previous reference intact.
+6. **Re-reference** — place a target at 80 cm and hold D7 for 2 s. Confirm the SAVING progress
+   bar, two rising chirps, `SAVED 80`, then `REF 80cm`, and that 80 cm now reads CORRECT while
+   100 cm reads FAR.
+7. **Refused save** — aim at open air and hold D7 for 2 s. Must refuse with the low error tone
+   and `SAVE FAILED`, and the previous reference must survive unchanged.
 8. **Endurance** — 5 minutes continuous. No resets, no stuck tone, no display corruption.
 
 Each test records its observed values into `reports/` as evidence, in keeping with the project
