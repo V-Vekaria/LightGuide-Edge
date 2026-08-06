@@ -52,6 +52,7 @@ const int REF_MIN_VALID = 12;
 // re-referencing to whatever happens to be in front of the sensor, which you
 // would not notice until the verdicts stopped making sense.
 const unsigned long HOLD_MS        = 2000;
+const unsigned long DEBOUNCE_MS    = 30;
 const unsigned long STUCK_CHECK_MS = 3000;
 
 // The device is either set up or it is not. A reference exists because the
@@ -67,6 +68,26 @@ Verdict prevDist     = V_NO_READ;
 Verdict prevLight    = V_NO_READ;
 bool    switchFaulty = false;
 
+// ---- labelled capture ---------------------------------------------------
+// The product is also the data logger. Training features are therefore produced
+// by exactly the code that produces inference features - no separate collection
+// sketch, and so no train/serve skew to reason about later.
+//
+// Deviations, not absolutes. `optimal` is not "1026 mm", it is "at the saved
+// reference", so the model must learn how far off the rig is rather than where
+// it happens to be. That is what lets a reference saved next week still work.
+const int   CLASS_COUNT = 5;
+const char *CLASS_NAMES[CLASS_COUNT] = {
+  "optimal", "too_close", "too_far", "underlit", "overlit"
+};
+
+const unsigned long RUN_WARMUP_MS = 1500;   // discarded: the LDR is slow to settle
+const unsigned long RUN_RECORD_MS = 5000;   // ~40 samples at 8 Hz
+
+int sessionId = 1;
+int labelIdx  = 0;
+int runCount[CLASS_COUNT] = {0, 0, 0, 0, 0};
+
 Adafruit_SSD1306 display(128, 64, &Wire, -1);
 bool oledOk = false;
 
@@ -76,6 +97,15 @@ bool          correctChirpDone = false;
 
 // True once the self-test result has actually reached an attached host.
 bool selfTestReported = false;
+
+// One button, two gestures. A short press records a labelled run; a two-second
+// hold captures a new reference. Hold is the destructive one, so it is the one
+// that cannot happen by accident.
+//
+// Declared up here with the other types, not next to pollButton() where it
+// belongs: the Arduino build auto-generates function prototypes near the top of
+// the file, so any type used in a signature must already exist at that point.
+enum BtnEvent { BTN_NONE, BTN_SHORT, BTN_HOLD };
 
 // One loop's worth of sensing from both channels.
 struct Sample {
@@ -363,27 +393,36 @@ void updateLed(Verdict vd, Verdict vl) {
 
 // ---- setting the reference ----------------------------------------------
 
-// Fires once when the button has been held for HOLD_MS, and not again until it
-// is released and pressed afresh. Non-blocking, because the loop has to keep
-// reading the sensor while the operator is holding the button down.
-bool holdFired() {
+// Non-blocking, because the loop has to keep reading the sensor while the
+// operator is holding the button down. BTN_HOLD fires while still held, so the
+// operator gets feedback at two seconds rather than on release.
+BtnEvent pollButton() {
   static bool          wasDown = false;
   static unsigned long downAt  = 0;
   static bool          fired   = false;
 
-  if (switchFaulty) return false;
+  if (switchFaulty) return BTN_NONE;
 
   const bool down = (digitalRead(PIN_SWITCH) == LOW);
   const unsigned long now = millis();
 
-  if (!down)    { wasDown = false; return false; }
-  if (!wasDown) { wasDown = true; downAt = now; fired = false; return false; }
+  if (!down) {
+    // Released. A press that never reached the hold threshold was a short one.
+    if (wasDown && !fired) {
+      wasDown = false;
+      return ((now - downAt) >= DEBOUNCE_MS) ? BTN_SHORT : BTN_NONE;
+    }
+    wasDown = false;
+    return BTN_NONE;
+  }
+
+  if (!wasDown) { wasDown = true; downAt = now; fired = false; return BTN_NONE; }
 
   if (!fired && (now - downAt) >= HOLD_MS) {
     fired = true;
-    return true;
+    return BTN_HOLD;
   }
-  return false;
+  return BTN_NONE;
 }
 
 // Returns true and fills both references, or returns false and changes nothing.
@@ -492,6 +531,122 @@ void doSave() {
   prevLight = V_NO_READ;
 }
 
+// ---- labelled capture ---------------------------------------------------
+
+void printStatus() {
+  Serial.print(F("# session=")); Serial.print(sessionId);
+  Serial.print(F(" label="));    Serial.print(labelIdx);
+  Serial.print(F(" ("));         Serial.print(CLASS_NAMES[labelIdx]);
+  Serial.print(F(") armed="));   Serial.println(armed ? F("yes") : F("no"));
+  for (int i = 0; i < CLASS_COUNT; i++) {
+    Serial.print(F("#   ")); Serial.print(CLASS_NAMES[i]);
+    Serial.print(F(": "));   Serial.print(runCount[i]);
+    Serial.println(F(" runs"));
+  }
+}
+
+// L<0-4> pick a class, S<n> set the session id, ? report. Kept to single letters
+// so the operator can retype them quickly between runs without losing their place.
+void handleSerialCommands() {
+  while (Serial.available()) {
+    const char c = Serial.read();
+    if (c == 'L' || c == 'l') {
+      const int n = Serial.parseInt();
+      if (n >= 0 && n < CLASS_COUNT) { labelIdx = n; printStatus(); }
+      else Serial.println(F("# label out of range 0-4"));
+    } else if (c == 'S' || c == 's') {
+      const int n = Serial.parseInt();
+      if (n > 0) { sessionId = n; printStatus(); }
+    } else if (c == '?') {
+      printStatus();
+    }
+  }
+}
+
+void renderRun(const char *state, int rows) {
+  if (!oledOk) return;
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setCursor(0, 0);
+  display.print(F("S")); display.print(sessionId);
+  display.print(F("  L")); display.print(labelIdx);
+  printCentred(CLASS_NAMES[labelIdx], 2, 14);
+  printCentred(state, 2, 36);
+  display.setTextSize(1);
+  display.setCursor(0, 56);
+  display.print(F("rows ")); display.print(rows);
+  display.print(F("   runs ")); display.print(runCount[labelIdx]);
+  display.display();
+}
+
+// Records one staged run. Blocking on purpose - the operator has deliberately
+// asked for a capture and nothing else should happen during it. This is the same
+// exemption doSave() takes, and for the same reason.
+//
+// The warm-up is discarded rather than recorded: a CdS cell takes tens to
+// hundreds of milliseconds to settle, so the first samples after the operator
+// steps back are of a light level that no longer exists.
+void recordRun() {
+  if (!armed) {
+    Serial.println(F("# CANNOT RECORD - no setup saved. Hold the button first."));
+    tone(PIN_BUZZ, 200); delay(300); noTone(PIN_BUZZ);
+    return;
+  }
+
+  silenceBuzzer();
+  digitalWrite(LEDR, HIGH); digitalWrite(LEDG, HIGH); digitalWrite(LEDB, LOW);
+
+  unsigned long t0 = millis();
+  while (millis() - t0 < RUN_WARMUP_MS) {
+    sense();
+    renderRun("WARMUP", 0);
+  }
+
+  tone(PIN_BUZZ, 1400); delay(60); noTone(PIN_BUZZ);
+
+  Serial.print(F("# RUN_START session=")); Serial.print(sessionId);
+  Serial.print(F(" label="));              Serial.print(labelIdx);
+  Serial.print(F(" name="));               Serial.print(CLASS_NAMES[labelIdx]);
+  Serial.print(F(" ref_mm="));             Serial.print(refMm, 0);
+  Serial.print(F(" ref_ldr="));            Serial.println(refLight);
+  Serial.println(F("t_ms,dist_mm,d_dist_mm,ldr,d_ldr,missed,label,session"));
+
+  int rows = 0, dropouts = 0;
+  t0 = millis();
+  while (millis() - t0 < RUN_RECORD_MS) {
+    Sample s = sense();
+    if (s.distMm < 0) dropouts++;
+
+    Serial.print(millis() - t0);        Serial.print(',');
+    Serial.print(s.distMm, 0);          Serial.print(',');
+    if (s.distMm > 0) Serial.print(s.distMm - refMm, 0); else Serial.print(F("NA"));
+    Serial.print(',');
+    Serial.print(s.light);              Serial.print(',');
+    Serial.print(s.light - refLight);   Serial.print(',');
+    Serial.print(s.missed);             Serial.print(',');
+    Serial.print(labelIdx);             Serial.print(',');
+    Serial.println(sessionId);
+
+    rows++;
+    renderRun("REC", rows);
+  }
+
+  Serial.print(F("# RUN_END rows=")); Serial.print(rows);
+  Serial.print(F(" dropouts="));      Serial.println(dropouts);
+
+  runCount[labelIdx]++;
+
+  tone(PIN_BUZZ, 1600); delay(70); noTone(PIN_BUZZ); delay(50);
+  tone(PIN_BUZZ, 1600); delay(70); noTone(PIN_BUZZ);
+
+  renderRun("DONE", rows);
+  delay(900);
+
+  digitalWrite(LEDB, HIGH);
+  prevDist  = V_NO_READ;
+  prevLight = V_NO_READ;
+}
+
 void setup() {
   Serial.begin(115200);
   while (!Serial && millis() < 3000) { }
@@ -543,10 +698,11 @@ void loop() {
     selfTestReported = true;
   }
 
-  if (holdFired()) {
-    doSave();
-    return;
-  }
+  handleSerialCommands();
+
+  const BtnEvent ev = pollButton();
+  if (ev == BTN_HOLD)  { doSave();   return; }
+  if (ev == BTN_SHORT) { recordRun(); return; }
 
   Sample s = sense();
 
