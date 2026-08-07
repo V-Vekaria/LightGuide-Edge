@@ -24,13 +24,20 @@
 
 ## 2. Locked aims
 
-**Primary aim (from CW1, unchanged):**
-Build an embedded device that classifies studio-lighting **setup quality** in real time, entirely on-device, from distance / brightness / tilt, and tells the photographer what to adjust.
+> **AMENDED 7 August 2026 — the tilt channel is cut.** The aims below were locked on
+> 31 July against six classes and three sensors. The delivered system covers **five
+> classes across two sensors** (distance and brightness); `tilt_off` and the IMU channel
+> were dropped. Rationale, cost and the wording to use in the deck are in
+> `docs/12-SCOPE-CHANGE-TILT.md`. The amendment is recorded here rather than applied
+> silently — the original text is struck through, not deleted.
 
-**Secondary aims (from CW1, unchanged):**
+**Primary aim (from CW1, amended):**
+Build an embedded device that classifies studio-lighting **setup quality** in real time, entirely on-device, from distance / brightness / ~~tilt~~, and tells the photographer what to adjust.
+
+**Secondary aims (from CW1, amended):**
 1. Compare **multiple ML paradigms** — supervised, unsupervised (anomaly), and sequence-based — head to head.
 2. Achieve **low-latency on-device inference with zero cloud dependency** at run time.
-3. Deliver a **working prototype** covering **six setup conditions** with fast, actionable feedback.
+3. Deliver a **working prototype** covering ~~six~~ **five setup conditions** with fast, actionable feedback.
 
 **SDG alignment (NEW — required by the handbook, absent from CW1; see `docs/08-ETHICS-SDG.md`):**
 - **Primary: SDG 12 — Responsible Consumption and Production.** Repeated test-shot cycles keep 300–1000 W continuous / high-draw strobe lighting running longer than needed and shorten modifier and lamp service life. Getting the setup right first time cuts studio energy per shoot.
@@ -42,9 +49,9 @@ Build an embedded device that classifies studio-lighting **setup quality** in re
 
 ### In scope
 - Arduino Nano 33 BLE Sense (nRF52840) as the only compute target.
-- Sensors: **HC-SR04 ultrasonic** (distance), **LDR** (brightness), **on-board IMU** (tilt).
+- Sensors: **HC-SR04 ultrasonic** (distance), **LDR** (brightness). ~~on-board IMU (tilt)~~ — cut 7 Aug, §12.
 - Feedback: **SSD1306 I²C OLED**, on-board LED, buzzer *(buzzer optional — not present in the current physical build; see Risk R-04)*.
-- **Six** classification classes (§4).
+- **Five** classification classes (§4). ~~Six~~ — amended 7 Aug.
 - **Four** ML approaches trained and compared (§5).
 - Offline **and** online evaluation (§6).
 - Four Blackboard artefacts + oral defence (§7).
@@ -58,18 +65,18 @@ Build an embedded device that classifies studio-lighting **setup quality** in re
 
 ---
 
-## 4. Locked class definitions (6 classes)
+## 4. Class definitions (5 classes — amended 7 Aug)
 
 Reference setup is captured once by the user; every class is a deviation from it.
 
 | # | Label | Physical condition | Primary driving sensor |
 |---|---|---|---|
-| 0 | `optimal` | Distance, brightness and tilt all inside the reference band | all three |
+| 0 | `optimal` | Distance and brightness both inside the reference band | both |
 | 1 | `too_close` | Light stand nearer than the reference band | ultrasonic |
 | 2 | `too_far` | Light stand further than the reference band | ultrasonic |
 | 3 | `underlit` | Output below reference (dimmed, off, blocked, modifier added) | LDR |
 | 4 | `overlit` | Output above reference (dialled up, modifier removed) | LDR |
-| 5 | `tilt_off` | Head/stand angle deviates from reference aim | IMU |
+| ~~5~~ | ~~`tilt_off`~~ | ~~Head/stand angle deviates from reference aim~~ | **CUT 7 Aug — §12** |
 
 **Rule:** classes are *not* pure single-sensor cases. Deliberately collect confounded examples
 (e.g. `too_far` *and* dimmer, which also reads darker) so the model must learn the joint
@@ -84,7 +91,7 @@ three `if` statements — and the marker **will** ask.
 |---|---|---|---|
 | **M0** | Supervised, classical baseline | Decision Tree + k-NN + Logistic Regression (scikit-learn) | Floor. Proves the NN earns its cost. |
 | **M1** | Supervised, deep | MLP classifier (Edge Impulse NN) | **Shipping model.** |
-| **M2** | Unsupervised | Autoencoder, reconstruction-error anomaly detection | Rejects setups outside the six classes ("unknown"). |
+| **M2** | Unsupervised | Autoencoder, reconstruction-error anomaly detection | Rejects setups outside the five classes ("unknown"). |
 | **M3** | Sequence | Windowed 1-D CNN / temporal model over an N-sample window | Captures settling & motion; tests whether time context helps. |
 
 Every model reports: accuracy, macro-F1, per-class precision/recall, confusion matrix,
@@ -101,7 +108,7 @@ Full detail in `docs/05-EVALUATION-PLAN.md`. Non-negotiable elements:
 
 - **Offline:** 5-fold stratified CV + a **session-held-out** test set (never a random split — a random split leaks near-duplicate consecutive samples and inflates accuracy; say this out loud in the presentation).
 - **Online:** on-device live confusion matrix from a scripted trial protocol, measured `micros()` latency, real flash/RAM from the build, throughput.
-- **Ablation:** distance-only → +LDR → +IMU, to prove every sensor earns its place.
+- **Ablation:** distance-only → light-only → both, to prove every sensor earns its place. (The `+IMU` arm is cut with the tilt channel, §12.)
 - **Quantisation study:** float32 vs INT8 accuracy and size.
 
 ---
@@ -149,18 +156,18 @@ Update the status column at the end of every working session. Do not delete rows
 | Phase | Gate (must be true to pass) | Target date | Status |
 |---|---|---|---|
 | P0 Setup | Repo scaffolded, docs locked, board flashes and prints all 3 sensors | 31 Jul | ✅ **all three sensor channels working** — evidence: `reports/gate_G0_acceptance.md` |
-| P0.1 Hardware | HC-SR04, LDR, OLED, IMU verified; pin map confirmed | 31 Jul | 🟡 **G0 NOT passed.** All 9 components electrically working (root cause was the `−` rail at 3.3 V, §13.4), but `reports/gate_G0_acceptance.txt` ends `LDR response FAIL` — swing 255 counts = 6% of scale. **Blocks P1**, see §11.6 |
-| P0.2 Feedback devices | Buzzer, external LED, switch verified | 31 Jul | ✅ **done** — buzzer D9, LED D8, switch D7 (16 debounced presses) |
-| P1 Calibration | LDR→lux curve + ultrasonic→cm curve recorded against references | 1 Aug | ⬜ |
-| P2 Logger | Labelled CSV capture over serial working end-to-end | 1 Aug | ⬜ |
-| P3 Dataset | ≥250 samples/class × 6 classes, ≥3 sessions, held-out session reserved | 2 Aug | ⬜ |
-| P4 Offline ML | M0–M3 trained, CV + test metrics, confusion matrices, ablation | 3 Aug | ⬜ |
-| P5 Edge Impulse | EI project public, model trained, INT8 quantised, library exported | 4 Aug | ⬜ |
-| P6 On-device | Inference + OLED/LED feedback loop running standalone | 5 Aug | ⬜ |
-| P7 Online eval | Live confusion matrix, latency, RAM/flash measured and tabulated | 6 Aug | ⬜ |
-| P8 Deck + video | 12-min deck built, split-screen demo video cut | 7 Aug | ⬜ |
+| P0.1 Hardware | HC-SR04, LDR, OLED, IMU verified; pin map confirmed | 31 Jul | ✅ **G0 PASSED 5 Aug** — root cause was the 1 kΩ pulldown never swapped, not a dead cell (§11.6). After fitting 10 kΩ: swing 2,806 counts = 68.5% of scale. Evidence: `reports/gate_G0_rerun_2026-08-05.txt` |
+| P0.2 Feedback devices | Buzzer, external LED, switch verified | 31 Jul | ✅ **done** — buzzer D9, LED D8, switch D7 (16 debounced presses). Buzzer **is** in the build; the R-04 "not fitted" note is obsolete |
+| P1 Calibration | LDR→lux curve + ultrasonic→cm curve recorded against references | 1 Aug | 🔴 **NOT DONE.** No `reports/calibration.md`, no `data/calibration/ldr_sweep.csv`. The channel-comparison logs are live streams, not a tape-measure sweep, so γ and R² do not exist. **CW1 flagged the uncalibrated LDR as an open issue and CW2 must close it.** Run `py -3 tools/calibrate.py --port COM4 --quick` |
+| P2 Logger | Labelled CSV capture over serial working end-to-end | 1 Aug | ✅ **done** — `02_data_logger` + `tools/capture.py`; capture is also built into `03_inference` |
+| P3 Dataset | ≥250 samples/class × 6 classes, ≥3 sessions, held-out session reserved | 2 Aug | 🟡 **5 of 6 classes.** 1,832 samples, 45 runs, 332–393/class, 3 sessions, **0 dropouts, 0 NaNs**, session 3 held out. `tilt_off` never collected — see `docs/12-SCOPE-CHANGE-TILT.md`. Evidence: `reports/dataset_report.md` |
+| P4 Offline ML | M0–M3 trained, CV + test metrics, confusion matrices, ablation | 3 Aug | ✅ **done** — M0a–d, M1, M2 novelty gate, M3 sequence, majority baseline, ablation. Best: decision tree, held-out macro-F1 **0.868**. `reports/offline_results.md` |
+| P5 Edge Impulse | EI project public, model trained, INT8 quantised, library exported | 4 Aug | 🔴 **NOT DONE.** Required element of the Code component. Dataset is exported and ready at `deliverables/edge_impulse/`; follow `docs/11-EDGE-IMPULSE-STEPS.md` (~45 min) |
+| P6 On-device | Inference + OLED/LED feedback loop running standalone | 5 Aug | ✅ **done** — `firmware/03_inference` classifies on-device from `model.h`. Measured footprint **120,896 B flash (12.3%)**, **46,696 B RAM (17.8%)** — regenerate with `py -3 tools/record_footprint.py`, never by hand |
+| P7 Online eval | Live confusion matrix, latency, RAM/flash measured and tabulated | 6 Aug | 🔴 **NOT DONE** — the 20% evaluation row's differentiator. Harness written and tested (`tools/online_trial.py`), firmware now records `infer_us`. Needs ~60 min at the rig |
+| P8 Deck + video | 12-min deck built, split-screen demo video cut | 7 Aug | ⬜ blocked on P1, P5, P7 producing their numbers |
 | P9 Rehearse | 2 timed run-throughs, Q&A pack drilled | 8 Aug | ⬜ |
-| P10 Submit | All 4 components uploaded, receipts screenshotted | **8 Aug (1 day early)** | ⬜ |
+| P10 Submit | All 4 components uploaded, receipts screenshotted | **8 Aug (1 day early)** | ⬜ packaging script ready: `tools/package_submission.py --ei-url ...` |
 
 Legend: ⬜ not started · 🟡 in progress · ✅ done · 🔴 blocked
 
@@ -170,6 +177,7 @@ Legend: ⬜ not started · 🟡 in progress · ✅ done · 🔴 blocked
 
 | Date | What changed | Next action |
 |---|---|---|
+| 2026-08-07 | **Pre-deck audit.** Fixed two silent bugs in `dataset_report.py` (the `#` header line was parsed as column names, so Gate G2 had never run; the LDR saturation check looked for a column name the logger does not write and was skipping in silence). Added M3 sequence model and the majority-class baseline the ML plan asked for. Added five presentation figures. Instrumented `03_inference` with `micros()` inference timing and a serial run trigger. Wrote `tools/online_trial.py`, `tools/export_edge_impulse.py`, `tools/make_figures.py`, `tools/package_submission.py`. Documented the tilt scope gap | **P1 calibration sweep, P5 Edge Impulse, P7 online trials** — all three need hardware or an account and none can be done from the repo |
 | 2026-07-31 | Requirements + rubric extracted from handbook; CW1 promises reconciled; repo scaffolded; docs locked; bring-up firmware + capture tool + offline pipeline written and smoke-tested end to end on synthetic data | — |
 | 2026-07-31 | Flashed `01_sensor_check` to COM4. **Rev1 confirmed, IMU/OLED/LDR all verified working. Ultrasonic ECHO stuck HIGH — blocker, see §13.** Fixed two mbed-core firmware bugs (`pulseIn` timeout, I²C scanner) | — |
 | 2026-07-31 | Built `01b_calibration` + `tools/calibrate.py`: meter-free LDR characterisation via the inverse-square law, ambient fitted as a free parameter, APDS9960 cross-check, ultrasonic calibrated from the same sweep. Fitter validated against a simulated cell (worst error 0.009 across a γ/ambient/noise grid) | — |

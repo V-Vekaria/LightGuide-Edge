@@ -30,7 +30,7 @@ light stand. *Justify this in the deck; "10 Hz because it seemed fine" is a 2:1 
 
 ## 2. Session design — the part that earns the marks
 
-**Never collect all six classes in one continuous sitting and then split randomly.**
+**Never collect all five classes in one continuous sitting and then split randomly.**
 Consecutive 10 Hz samples are near-duplicates; a random split puts near-identical rows in
 both train and test and inflates test accuracy dramatically. Session-wise splitting is the
 honest alternative, and saying so demonstrates exactly the methodological understanding the
@@ -62,7 +62,7 @@ Classes are relative to a reference, so the reference must be recorded, not reme
 
 1. Place the light stand at the intended position. Record `dist_mm`, `ldr_raw`, `pitch`, `roll`.
 2. Write them on the session sheet **and** photograph the physical setup with a tape measure in frame.
-3. Define the `optimal` band: ±10% on distance, ±15% on brightness, ±5° on tilt.
+3. Define the `optimal` band: ±10% on distance, ±15% on brightness. (±5 degrees on tilt — cut, see docs/12.)
    These tolerances are a design decision — state them and justify them against what a
    photographer can actually perceive (a ~15% light change is roughly a fifth of a stop,
    near the threshold of visible difference in a final image; a 10% distance change alters
@@ -87,7 +87,7 @@ learns the condition rather than one specific staging of it.
 | `too_far` | Move stand 15–50% further | Several distances |
 | `underlit` | Dim the light / add diffusion / partially block | Different dim levels and causes |
 | `overlit` | Increase output / remove diffusion / add reflector | Different levels and causes |
-| `tilt_off` | Angle the head 8–30° off aim | Both directions, pitch and roll |
+| ~~`tilt_off`~~ | ~~Angle the head 8–30° off aim~~ | **CUT 7 Aug — see `docs/12-SCOPE-CHANGE-TILT.md`** |
 
 **Confounded cases are mandatory.** Collect examples such as `too_far` *with the light
 turned up* (reads bright but is mispositioned) and `too_close` *dimmed* (reads normal but is

@@ -14,7 +14,7 @@ most projects omit; it is where this project separates itself.
 | Metric | Why it is here |
 |---|---|
 | Accuracy | Expected, but never reported alone |
-| **Macro-F1** | Headline. Weights all six classes equally |
+| **Macro-F1** | Headline. Weights all five classes equally |
 | Per-class precision / recall | Shows *which* class fails, which drives the failure analysis |
 | Confusion matrix (normalised) | One per model |
 | 5-fold CV mean ± std | Shows stability, not a lucky split |
@@ -89,7 +89,7 @@ one table:
 | Work | Sensors | Platform | Task | Accuracy | Latency | On-device? |
 |---|---|---|---|---|---|---|
 | *(3–5 rows from `09-REFERENCES.md`)* | | | | | | |
-| **LightGuide Edge** | US + LDR + IMU | nRF52840 | 6-class setup quality | *measured* | *measured* | Yes |
+| **LightGuide Edge** | US + LDR | nRF52840 | 5-class setup quality | *measured* | *measured* | Yes |
 
 The honest framing: no directly comparable published system exists for *physical lighting
 setup guidance* — that gap is itself the contribution. Compare instead against adjacent
@@ -107,7 +107,7 @@ class, then group them. Expected failure modes, to be confirmed or refuted by th
 
 - `too_far` vs `underlit` — physically coupled through the inverse-square law; the confounded
   training samples exist specifically to break this tie.
-- `optimal` vs `tilt_off` at small angles — near the tolerance boundary, where the label
+- `optimal` vs `too_far` near the tolerance boundary — where the label
   itself is genuinely ambiguous.
 - Ultrasonic dropouts against soft or angled surfaces.
 

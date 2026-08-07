@@ -74,8 +74,8 @@ hold the largest set of simultaneously-live activations. Weights live in flash; 
 live in RAM. Ours: arena X KB of the 256 KB total, leaving Y for stack and buffers. *Extend:*
 RAM, not flash, is what capped the sequence model's window length.
 
-**"What happens if the device sees something that isn't one of your six classes?"**
-This is the autoencoder's job, and it is the part to be proud of. A six-class softmax must
+**"What happens if the device sees something that isn't one of your five classes?"**
+This is the autoencoder's job, and it is the part to be proud of. A five-class softmax must
 answer, so it answers confidently and wrongly. The autoencoder is trained only on `optimal`
 data; when reconstruction error exceeds the 95th-percentile training threshold the device
 displays `UNKNOWN SETUP`. *Extend:* honest uncertainty is a requirement for a tool anyone
@@ -84,7 +84,7 @@ would trust in paid work — a confident wrong answer costs a whole session.
 **"What's the accuracy?"**
 Never answer with one number. "Macro-F1 of X on a held-out session, versus Y under 5-fold
 CV; the gap is session variation. Accuracy alone would read Z, but macro-F1 is the honest
-metric because it weights all six classes equally and a missed `tilt_off` matters as much as
+metric because it weights all five classes equally and a missed `underlit` matters as much as
 a missed `too_far`."
 
 **"What's your latency?"**
@@ -94,8 +94,34 @@ the ultrasonic ping (~60 ms minimum) not by the model. Quoting only the inferenc
 would be an overclaim.
 
 **"Which sensor matters most?"**
-Point at the ablation table. Distance-only gets X, +LDR gets Y, +IMU gets Z. *Extend:* if the
-IMU contribution is small, the honest recommendation is a cheaper two-sensor variant.
+Point at the ablation table. Neither is sufficient alone — distance-only reaches **0.410**
+macro-F1 and light-only **0.461**, both barely above the five-class chance floor. Together
+they reach **0.868**. *Extend:* that is the argument for a multi-sensor device rather than a
+cheaper single-sensor one, and it is measured rather than assumed.
+
+**"Why five classes? Your proposal said six."** ← near-certain, have this ready
+Straight answer, no hedging: "The sixth class was `tilt_off`, driven by the on-board IMU. It
+was cut. Two hardware faults consumed the days budgeted for it — the ultrasonic ECHO line and
+a wrong LDR pulldown resistor, both documented with the measurements that found them. Adding
+the class late would have meant recollecting all three sessions, because the feature vector
+changes for every sample. I chose to hold the five classes to the full quality gate —
+332–393 samples each, three sessions, zero dropouts, zero NaNs, a genuinely held-out test
+session — rather than ship six thin ones. The IMU is on the board and initialised; the cost
+is recollection, not hardware, and it is the first thing on the future-work slide."
+
+*Why this works:* it names the decision, gives the real reason, shows the trade was
+considered rather than forgotten, and lands on a costed future-work item. The Demo and
+Evaluation rows both explicitly reward understanding of limitations.
+
+**"Your threshold rule beats your ML model. Why use ML at all?"** ← ask yourself this before they do
+The honest answer, and it is a good one: "On this dataset it does, and I report that in the
+results rather than hiding it. But the comparison is circular — each class was *staged*
+against the same ±30 mm and ±5% bands the rule encodes, so the rule is scored against its own
+definition and cannot lose. What that score measures is the consistency of my staging
+protocol, not the rule's intelligence. Distinguishing the two approaches needs conditions the
+rule was never tuned for: confounded setups, transitions, and the settling transients that
+only appear in the online evaluation. And the rule has no answer at all for `UNKNOWN SETUP` —
+a threshold cannot say 'this is unlike anything I was trained on'. That is what M2 adds."
 
 **"How would you improve this?"**
 Only give answers tied to a measured limitation (`05-EVALUATION-PLAN.md` §5). Generic answers

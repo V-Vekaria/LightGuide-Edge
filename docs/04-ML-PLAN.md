@@ -63,7 +63,7 @@ Edge Impulse NN block and the model that ships.
 17 → 8 → 3 → 8 → 17, trained **only on `optimal`** samples. Reconstruction error above a
 threshold (95th percentile of the training reconstruction error) flags "not a known setup".
 
-**Why:** a six-class softmax is forced to answer even when the truth is none of the six —
+**Why:** a five-class softmax is forced to answer even when the truth is none of the five —
 someone walks in front of the sensor, the light is off entirely, the device is knocked. A
 classifier will confidently return a wrong class. The autoencoder gates that: when
 reconstruction error is high the device shows `UNKNOWN SETUP` instead of a confident lie.
@@ -97,7 +97,7 @@ required element.
 - **Grouped splitting** — folds are grouped by run, never by sample, so overlapping windows
   from one run cannot straddle a fold boundary.
 - **Macro-F1 as the headline metric**, not accuracy. Accuracy flatters imbalanced classes;
-  macro-F1 weights all six equally, which matches the application — missing `tilt_off` matters
+  macro-F1 weights all five equally, which matches the application — missing `underlit` matters
   as much as missing `too_far`.
 - **Baseline comparison:** majority-class and a hand-tuned threshold rule. If the ML model
   does not beat the threshold rule, that is the finding and it must be reported.
@@ -109,9 +109,9 @@ required element.
 |---|---|---|
 | Ultrasonic only | 4 | Can distance alone do it? |
 | + LDR | 8 | Does light add information? |
-| + IMU | 17 | Does tilt add information? |
+| ~~+ IMU~~ | ~~17~~ | **Cut with the tilt channel — see `docs/12-SCOPE-CHANGE-TILT.md`. Do not present this row.** |
 
-Each sensor must earn its place. If the IMU adds under a point of macro-F1, say so — an
+Each sensor must earn its place. If a sensor adds under a point of macro-F1, say so — an
 honest negative result reads as rigour, and it feeds directly into a future-work
 recommendation about sensor selection for a cost-reduced version.
 

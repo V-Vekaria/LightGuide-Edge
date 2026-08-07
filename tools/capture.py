@@ -12,7 +12,11 @@ Usage:
     python tools/capture.py --port COM4 --session 1 --interactive
     python tools/capture.py --list
 
-Class labels: 0 optimal  1 too_close  2 too_far  3 underlit  4 overlit  5 tilt_off
+Class labels: 0 optimal  1 too_close  2 too_far  3 underlit  4 overlit
+
+`tilt_off` was cut on 7 August (docs/12-SCOPE-CHANGE-TILT.md). It is removed from the
+class list rather than left in place, because the firmware rejects label 5 and a tool
+that offers a label the device refuses is a trap for a tired operator at 11 pm.
 """
 
 from __future__ import annotations
@@ -30,7 +34,7 @@ try:
 except ImportError:
     sys.exit("pyserial is not installed. Run: pip install -r tools/requirements.txt")
 
-CLASS_NAMES = ["optimal", "too_close", "too_far", "underlit", "overlit", "tilt_off"]
+CLASS_NAMES = ["optimal", "too_close", "too_far", "underlit", "overlit"]
 BAUD = 115200
 WARMUP_S = 2.0  # discarded: the LDR settles and early pings are unreliable
 RAW_DIR = Path(__file__).resolve().parent.parent / "data" / "raw"
@@ -132,15 +136,16 @@ def capture_run(ser: serial.Serial, session: int, label: int, seconds: float) ->
 
 
 def interactive(ser: serial.Serial, session: int, seconds: float) -> None:
-    print("\nInteractive capture. Enter a label 0-5 to record a run, or q to quit.")
+    top = len(CLASS_NAMES) - 1
+    print(f"\nInteractive capture. Enter a label 0-{top} to record a run, or q to quit.")
     for i, n in enumerate(CLASS_NAMES):
         print(f"  {i} {n}")
     while True:
         raw = input("\nlabel> ").strip().lower()
         if raw in ("q", "quit", "exit"):
             break
-        if not raw.isdigit() or not 0 <= int(raw) <= 5:
-            print("  enter 0-5, or q")
+        if not raw.isdigit() or not 0 <= int(raw) <= top:
+            print(f"  enter 0-{top}, or q")
             continue
         capture_run(ser, session, int(raw), seconds)
 
@@ -149,7 +154,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="LightGuide Edge labelled capture")
     ap.add_argument("--port", help="serial port, e.g. COM4")
     ap.add_argument("--session", type=int, default=1, help="session id (see data protocol)")
-    ap.add_argument("--label", type=int, choices=range(6), help="class label 0-5")
+    ap.add_argument("--label", type=int, choices=range(len(CLASS_NAMES)),
+                    help=f"class label 0-{len(CLASS_NAMES) - 1}")
     ap.add_argument("--seconds", type=float, default=10.0, help="capture length after warm-up")
     ap.add_argument("--interactive", action="store_true", help="prompt for labels in a loop")
     ap.add_argument("--list", action="store_true", help="list serial ports and exit")

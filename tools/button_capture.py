@@ -33,7 +33,7 @@ except ImportError:
 
 ROOT = Path(__file__).resolve().parent.parent
 RAW = ROOT / "data" / "raw"
-CLASS_NAMES = ["optimal", "too_close", "too_far", "underlit", "overlit", "tilt_off"]
+CLASS_NAMES = ["optimal", "too_close", "too_far", "underlit", "overlit"]
 TARGET_PER_CLASS = 9      # 9 runs x 30 samples = 270 samples, clears the 250 target
 
 

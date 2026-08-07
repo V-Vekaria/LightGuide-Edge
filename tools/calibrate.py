@@ -69,6 +69,13 @@ ADC_MAX = 4095.0
 
 DEFAULT_DISTANCES_CM = [30, 40, 50, 65, 80, 100, 125, 150, 200]
 
+# Six points spanning the same range, for when there is not time for eleven.
+# The far points matter more than the near ones: the rig lamp is a flat panel, so
+# inverse-square only holds properly beyond about a metre and that is where gamma
+# is actually constrained (docs/02-HARDWARE.md section 4). Dropping the crowded
+# 30-65 cm cluster costs little; dropping the far end would cost the fit.
+QUICK_DISTANCES_CM = [40, 70, 100, 150, 220, 300]
+
 
 # ---------------------------------------------------------------------------
 # Acquisition
@@ -464,6 +471,9 @@ def main() -> None:
     ap.add_argument("--port", help="serial port, e.g. COM4")
     ap.add_argument("--distances", type=float, nargs="+", default=DEFAULT_DISTANCES_CM,
                     help="distances in cm to sweep")
+    ap.add_argument("--quick", action="store_true",
+                    help=f"six-point sweep ({', '.join(str(d) for d in QUICK_DISTANCES_CM)} cm) "
+                         "instead of nine - about 8 minutes")
     ap.add_argument("--fit-only", action="store_true",
                     help="refit and re-plot an existing sweep, no hardware needed")
     args = ap.parse_args()
@@ -473,9 +483,13 @@ def main() -> None:
     else:
         if not args.port:
             sys.exit("--port is required (or use --fit-only)")
+        # --distances wins if given explicitly; --quick only overrides the default.
+        distances = args.distances
+        if args.quick and distances == DEFAULT_DISTANCES_CM:
+            distances = QUICK_DISTANCES_CM
         ser = open_port(args.port)
         try:
-            rows = sweep(ser, args.distances)
+            rows = sweep(ser, distances)
         finally:
             ser.close()
 

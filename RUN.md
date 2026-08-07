@@ -16,54 +16,67 @@ close it before running a Python tool or flashing — otherwise the port is busy
 
 ---
 
-## Right now — the next thing to run
+## Right now — 7 August, three things left that need the rig
 
-**1. Confirm the hardware after the 10 kΩ resistor swap**
+G0 passed on 5 August. Calibration, data, offline ML and the on-device product are done.
+**Three gates remain and none of them can be done from the repo** — they need the hardware,
+a tape measure, or an Edge Impulse account.
 
-```bash
-arduino-cli upload -p COM4 --fqbn arduino:mbed_nano:nano33ble firmware/01e_acceptance
-```
+**1. Calibration sweep — Gate P1 · ~8 minutes**
 
-Watch the serial output. You want `*** GATE G0 PASSED ***` with `LDR response PASS`.
-
-**Do not skip this.** The only acceptance run on record ends `GATE G0 NOT PASSED` with
-`LDR response FAIL`. `tools/calibrate.py` assumes a 10 kΩ pulldown (`R_FIXED`), so
-calibrating with the 1 kΩ still fitted makes γ meaningless — and it would show up months
-later as an unexplained accuracy ceiling, not as an error. See `AGENTS.md` §11.6.
-
-**2. Then calibrate (Day 1)**
+This is the one CW1 flagged as an open issue, so it has to be closed. It is *not* about the
+distance sensor reading correctly — it is about the LDR's response curve, γ. The distance
+half comes free from the same sweep and turns "the tape agrees" into a slope, offset and
+RMSE in millimetres.
 
 ```bash
-python tools/calibrate.py --port COM4 --distances 30 40 50 65 80 100 125 150 200 250 300
-```
-
-The extra far points are deliberate: the rig light is a flat panel, so inverse-square only
-holds beyond ~1 m and γ must be fitted out there. `docs/02-HARDWARE.md` §4 explains why, and
-why the near points are still worth collecting.
-
-Flash `firmware/01b_calibration` first — the script tells you if it isn't running. Guided
-sweep, ~10 minutes, needs a tape measure and a lamp you can switch on and off.
-
-**3. Then collect data (Day 2 — Saturday, the big one)**
-
-```bash
-arduino-cli upload -p COM4 --fqbn arduino:mbed_nano:nano33ble firmware/02_data_logger
+arduino-cli upload -p COM4 --fqbn arduino:mbed_nano:nano33ble firmware/01b_calibration
 ```
 
 ```bash
-python tools/capture.py --port COM4 --session 1 --interactive
+py -3 tools/calibrate.py --port COM4 --quick
 ```
 
-**4. Check the dataset passed its quality gate**
+Needs a tape measure and a lamp you can switch on and off without moving it. Six distances,
+lamp on and lamp off at each. Writes `reports/calibration.md`. Check γ lands in 0.5–0.9 and
+R² ≥ 0.98.
+
+**2. Online evaluation — Gate P7 · ~60 minutes**
+
+The 20% Critical Evaluation row's differentiator, and the piece most projects never collect.
 
 ```bash
-python tools/dataset_report.py
+arduino-cli upload -p COM4 --fqbn arduino:mbed_nano:nano33ble firmware/03_inference
 ```
 
-**5. Train and compare all four models (Day 3)**
+Hold **D7 for 2 s** to save a reference first, then:
 
 ```bash
-python tools/train_offline.py
+py -3 tools/online_trial.py --port COM4 --trials 10
+```
+
+50 runs, prompted one at a time. Writes `reports/online_results.md` with per-sample and
+per-run confusion matrices, measured inference latency and the footprint table. Rehearse the
+flow with `--trials 2 --quick` first.
+
+**3. Edge Impulse — Gate P5 · ~45 minutes**
+
+A link to a **public** EI project is a required part of the Code component. The dataset is
+already exported to `deliverables/edge_impulse/`. Follow `docs/11-EDGE-IMPULSE-STEPS.md`
+step by step.
+
+**Then package:**
+
+```bash
+py -3 tools/package_submission.py --ei-url https://studio.edgeimpulse.com/public/XXXXX/live
+```
+
+---
+
+### Regenerating anything offline (no hardware needed)
+
+```bash
+py -3 tools/dataset_report.py && py -3 tools/train_offline.py && py -3 tools/make_figures.py
 ```
 
 ---
@@ -88,7 +101,7 @@ arduino-cli upload -p COM4 --fqbn arduino:mbed_nano:nano33ble firmware/<NAME>
 | `01d_output_test` | Buzzer, LED, switch. |
 | `01e_acceptance` | **Gate G0 full acceptance test.** Run after any wiring change. |
 | `02_data_logger` | Required before `tools/capture.py`. Labelled 10 Hz capture. |
-| `03_inference` | ✅ **The product.** Distance **and** light checked against one saved setup. Boots to `NO SETUP SAVED`; hold D7 for 2 s to capture both references. Two-row OLED, buzzer priority distance-then-light, LED green/red/blue. Decides by threshold; the classifier replaces `decide()` in Phase 3. |
+| `03_inference` | ✅ **The product.** Distance **and** light checked against one saved setup. Boots to `NO SETUP SAVED`; hold D7 for 2 s to capture both references. Two-row OLED, buzzer priority distance-then-light, LED green/red/blue. Runs the trained classifier from `model.h` alongside the `decide()` verdicts, times every inference with `micros()`, and records labelled runs carrying both the staged label and the live prediction. |
 
 To watch serial output without a Python tool:
 
@@ -105,8 +118,24 @@ arduino-cli monitor -p COM4 --config baudrate=115200
 | `tools/calibrate.py` | Guided sweep, fits the LDR curve, writes `reports/calibration.md` | `01b_calibration` |
 | `tools/capture.py` | Records labelled runs into `data/raw/` | `02_data_logger` |
 | `tools/dataset_report.py` | Gate G2 quality check — fails loudly if the dataset is short or unbalanced | nothing (reads files) |
-| `tools/train_offline.py` | Trains M0–M3, ablation, confusion matrices | nothing (reads files) |
+| `tools/train_offline.py` | Trains M0–M3, baselines, ablation, confusion matrices | nothing (reads files) |
+| `tools/online_trial.py` | **Gate G6.** Drives live trials, builds the online confusion matrix and latency table | `03_inference` |
+| `tools/make_figures.py` | Presentation figures: traces, feature space, model comparison, ablation | nothing (reads files) |
+| `tools/export_edge_impulse.py` | Writes the EI upload set, train/test split preserved | nothing (reads files) |
+| `tools/export_tree.py` | Regenerates `firmware/03_inference/model.h` from the trained tree | nothing (reads files) |
+| `tools/record_footprint.py` | Compiles and records real flash/RAM into `reports/footprint.json` | nothing (compiles only) |
+| `tools/package_submission.py` | Builds and verifies the D1 Code and D2 Dataset zips | nothing (reads files) |
 | `tools/read_serial.ps1` | Captures serial output for N seconds and exits (see note below) | anything |
+
+### Serial commands accepted by `03_inference`
+
+| Key | Effect |
+|---|---|
+| `L0`–`L4` | Stage a class label for the next recorded run |
+| `S<n>` | Set the session id |
+| `R` | Record a run now (same as a short D7 press) |
+| `T` | Print inference latency statistics |
+| `?` | Print status and latency |
 
 **Use `read_serial.ps1` when you need to *capture* output rather than watch it.**
 `arduino-cli monitor` is interactive and never returns, so it cannot be scripted or logged:
@@ -141,9 +170,14 @@ python tools/dataset_report.py --min-per-class 200
 `firmware/03_inference` — sense, classify, guide, entirely on-device. It is the deliverable
 and the thing you demo.
 
-It does not exist yet, and cannot: it needs the trained model and the frozen scaler
-constants baked into it, which only exist after Sunday's training and Monday's Edge Impulse
-export. Everything before it is either a diagnostic or a step in producing that model.
+It exists and it runs. `model.h` carries a depth-4 decision tree with the training-time
+z-scoring folded into the constants, so the device needs no scaler at run time.
+
+Measured footprint is in `reports/footprint.json`, written by `tools/record_footprint.py`
+from the linker's own output. **Re-run that after any firmware change** — the online-results
+report and the submission README both read it, so the deck cannot go stale quietly.
+
+Everything else in `firmware/` is either a diagnostic or a step in producing that model.
 
 ---
 

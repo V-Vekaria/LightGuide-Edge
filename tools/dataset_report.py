@@ -25,7 +25,10 @@ RAW = ROOT / "data" / "raw"
 REPORTS = ROOT / "reports"
 FIGURES = REPORTS / "figures"
 
-CLASS_NAMES = ["optimal", "too_close", "too_far", "underlit", "overlit", "tilt_off"]
+# Five classes. `tilt_off` was cut on 7 August - see docs/12-SCOPE-CHANGE-TILT.md.
+# It is removed here rather than left in at zero samples, because a gate that reports
+# FAIL for a class nobody intends to collect trains you to ignore the gate.
+CLASS_NAMES = ["optimal", "too_close", "too_far", "underlit", "overlit"]
 
 
 def load_raw() -> pd.DataFrame:
@@ -34,7 +37,10 @@ def load_raw() -> pd.DataFrame:
         sys.exit(f"No capture files in {RAW}. Run tools/capture.py first.")
     frames = []
     for f in files:
-        df = pd.read_csv(f)
+        # Each capture opens with a `#` line carrying the session reference, so the
+        # file is self-describing. Without comment="#" pandas reads that line as the
+        # header and every column name comes out wrong.
+        df = pd.read_csv(f, comment="#")
         df["source_file"] = f.name
         frames.append(df)
     return pd.concat(frames, ignore_index=True)
@@ -85,7 +91,10 @@ def main() -> None:
     lines.append("| session | samples | classes present |")
     lines.append("|---|---|---|")
     for s, grp in df.groupby("session"):
-        lines.append(f"| {s} | {len(grp)} | {sorted(grp['label'].unique())} |")
+        # Format the labels by hand: numpy scalars stringify as `np.int64(0)`, which
+        # is noise in a document that gets submitted.
+        present = ", ".join(CLASS_NAMES[int(i)] for i in sorted(grp["label"].unique()))
+        lines.append(f"| {int(s)} | {len(grp)} | {present} |")
     n_sessions = df["session"].nunique()
     if n_sessions < args.min_sessions:
         failures.append(f"only {n_sessions} sessions, need {args.min_sessions}")
@@ -106,14 +115,22 @@ def main() -> None:
         if pct > 10:
             lines.append("  - above the 10% threshold in risk R-08; report this as a finding")
 
-    if "ldr_raw" in df:
-        lo = int((df["ldr_raw"] <= 5).sum())
-        hi = int((df["ldr_raw"] >= 4090).sum())
+    # The logger writes this column as `ldr`; `ldr_raw` is the name the bring-up
+    # sketches used. Accept either, and say so if neither is present rather than
+    # skipping the saturation gate in silence.
+    ldr_col = next((c for c in ("ldr", "ldr_raw") if c in df), None)
+    if ldr_col is None:
+        failures.append("no LDR column found - the saturation gate could not run")
+    else:
+        lo = int((df[ldr_col] <= 5).sum())
+        hi = int((df[ldr_col] >= 4090).sum())
         lines.append(f"- LDR pinned low: **{lo}**, pinned high: **{hi}**")
         if lo + hi > 0.02 * len(df):
             # A saturated LDR carries no information at all in that region.
             failures.append("LDR saturating - change the divider resistor (risk R-07) "
                             "and re-record the calibration")
+
+    cols_present = [c for c in ("dist_mm", ldr_col) if c and c in df]
     lines.append("")
 
     # --- per-class channel summary, the blind spot-check from the protocol ---
@@ -124,8 +141,7 @@ def main() -> None:
                  "`underlit` must show a lower mean LDR than `overlit`. "
                  "If not, runs were mislabelled.")
     lines.append("")
-    cols = [c for c in ("dist_mm", "ldr_raw", "pitch", "roll") if c in df]
-    summary = df[df["dist_mm"] >= 0].groupby("label")[cols].mean().round(1)
+    summary = df[df["dist_mm"] >= 0].groupby("label")[cols_present].mean().round(1)
     summary.index = [CLASS_NAMES[i] for i in summary.index]
     lines.append(summary.to_markdown())
     lines.append("")

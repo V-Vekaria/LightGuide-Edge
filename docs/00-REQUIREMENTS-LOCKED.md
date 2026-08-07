@@ -117,7 +117,7 @@ Everything CW1 promised is carried forward unchanged. Three items need attention
 
 | CW1 promise | CW2 status |
 |---|---|
-| Six setup conditions | ✅ locked, defined in `AGENTS.md` §4 |
+| Six setup conditions | ⚠️ **amended to five** — `tilt_off` cut 7 Aug, see `docs/12-SCOPE-CHANGE-TILT.md`. Declare it on the data slide; do not let a marker find it |
 | 250+ labelled samples per class | ✅ carried as the P3 gate |
 | Three ML paradigms compared head-to-head | ✅ carried, **plus** a classical baseline (M0) |
 | INT8-quantised TFLite Micro on the Nano | ✅ carried |

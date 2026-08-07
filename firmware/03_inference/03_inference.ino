@@ -20,6 +20,7 @@
 #include "decision.h"
 #include "self_test.h"
 #include "model.h"
+#include "storage.h"
 
 // ---- pins (docs/02-HARDWARE.md) ----------------------------------------
 const int PIN_TRIG   = 2;
@@ -265,6 +266,56 @@ bool computeFeatures(Features &f) {
   f.d_dist_mm_min = dMin; f.d_dist_mm_max = dMax;
   f.d_ldr_min     = lMin; f.d_ldr_max     = lMax;
   return true;
+}
+
+// ---- inference timing ---------------------------------------------------
+//
+// docs/04-ML-PLAN.md section 5 asks for real measured latency rather than a
+// profiler estimate, and the evaluation slide needs a number with an n attached.
+//
+// Feature extraction is timed together with the tree walk on purpose. What the
+// operator waits for is window -> features -> class; quoting the tree walk alone
+// would flatter the figure by leaving out the loop that produces its inputs.
+//
+// micros() has ~1 us resolution here, and a depth-4 tree over eight floats runs
+// close to that floor, so a single reading is mostly quantisation noise. These
+// accumulate over every inference the device performs, which is what makes the
+// mean trustworthy even though one sample is not.
+unsigned long inferLastUs = 0;
+unsigned long inferCount  = 0;
+unsigned long inferSumUs  = 0;
+unsigned long inferMaxUs  = 0;
+unsigned long inferMinUs  = 0xFFFFFFFFUL;
+
+// Returns true when a fresh classification was produced. Replaces the
+// computeFeatures/classify pair everywhere, so no call site can be timed and
+// another one silently not.
+bool classifyTimed() {
+  Features f;
+  const unsigned long t0 = micros();
+  const bool ready = computeFeatures(f);
+  const int  cls   = ready ? classify(f) : -1;
+  const unsigned long dt = micros() - t0;
+
+  if (!ready) return false;          // window still filling; not an inference
+
+  modelClass  = cls;
+  inferLastUs = dt;
+  inferCount++;
+  inferSumUs += dt;
+  if (dt > inferMaxUs) inferMaxUs = dt;
+  if (dt < inferMinUs) inferMinUs = dt;
+  return true;
+}
+
+void printLatency() {
+  Serial.print(F("# INFER n=")); Serial.print(inferCount);
+  if (inferCount == 0) { Serial.println(F(" - no inferences yet")); return; }
+  Serial.print(F(" mean_us="));
+  Serial.print((float)inferSumUs / (float)inferCount, 2);
+  Serial.print(F(" min_us="));  Serial.print(inferMinUs);
+  Serial.print(F(" max_us="));  Serial.print(inferMaxUs);
+  Serial.print(F(" last_us=")); Serial.println(inferLastUs);
 }
 
 // ---- display ------------------------------------------------------------
@@ -585,9 +636,15 @@ void doSave() {
   refLight = newLight;
   armed    = true;
 
+  // Persist it. A failure here is reported rather than hidden: the device still
+  // works for this session, but the operator needs to know it will not remember
+  // the setup after a power cycle.
+  const bool stored = saveSetup(refMm, refLight);
+
   Serial.print(F("# REFERENCE SAVED "));
   Serial.print(refMm, 0);   Serial.print(F(" mm / "));
-  Serial.print(refLight);   Serial.println(F(" counts"));
+  Serial.print(refLight);   Serial.print(F(" counts"));
+  Serial.println(stored ? F(" (stored in flash)") : F(" (RAM ONLY - flash write failed)"));
 
   tone(PIN_BUZZ, 1200); delay(80); noTone(PIN_BUZZ); delay(60);
   tone(PIN_BUZZ, 1600); delay(80); noTone(PIN_BUZZ);
@@ -597,12 +654,14 @@ void doSave() {
     display.setTextSize(2);
     display.setCursor(0, 4);  display.print(F("SAVED"));
     display.setTextSize(1);
-    display.setCursor(0, 28); display.print(F("dist  "));
+    display.setCursor(0, 24); display.print(F("dist  "));
     display.print(refMm / 10.0f, 0); display.print(F(" cm"));
-    display.setCursor(0, 42); display.print(F("light "));
+    display.setCursor(0, 36); display.print(F("light "));
     display.print(refLight);
+    display.setCursor(0, 52);
+    display.print(stored ? F("kept after power off") : F("RAM ONLY - not stored"));
     display.display();
-    delay(1600);
+    delay(1800);
   }
 
   // Forget both histories so the new setup earns its verdicts from scratch and
@@ -627,8 +686,14 @@ void printStatus() {
   }
 }
 
+void recordRun();   // defined below; the serial handler triggers it
+
 // L<0-4> pick a class, S<n> set the session id, ? report. Kept to single letters
 // so the operator can retype them quickly between runs without losing their place.
+//
+// R triggers a run from the host so tools/online_trial.py can drive a 50-trial
+// protocol unattended. The button still works and does exactly the same thing -
+// during the demo, pressing it by hand is the point.
 void handleSerialCommands() {
   while (Serial.available()) {
     const char c = Serial.read();
@@ -639,8 +704,13 @@ void handleSerialCommands() {
     } else if (c == 'S' || c == 's') {
       const int n = Serial.parseInt();
       if (n > 0) { sessionId = n; printStatus(); }
+    } else if (c == 'R' || c == 'r') {
+      recordRun();
+    } else if (c == 'T' || c == 't') {
+      printLatency();
     } else if (c == '?') {
       printStatus();
+      printLatency();
     }
   }
 }
@@ -685,8 +755,7 @@ void recordRun() {
     Sample w = sense();
     if (w.distMm > 0 && lightReadingValid(w.light)) {
       pushWindow(w.distMm - refMm, (float)(w.light - refLight));
-      Features f;
-      if (computeFeatures(f)) modelClass = classify(f);
+      classifyTimed();
     }
     renderRun("WARMUP", 0);
   }
@@ -702,7 +771,7 @@ void recordRun() {
   // `label` is the condition the operator actually staged. One file therefore
   // carries both sides of a confusion matrix, measured on the device rather than
   // reconstructed afterwards.
-  Serial.println(F("t_ms,dist_mm,d_dist_mm,ldr,d_ldr,missed,label,session,pred"));
+  Serial.println(F("t_ms,dist_mm,d_dist_mm,ldr,d_ldr,missed,label,session,pred,infer_us"));
 
   int rows = 0, dropouts = 0;
   t0 = millis();
@@ -712,8 +781,7 @@ void recordRun() {
 
     if (s.distMm > 0 && lightReadingValid(s.light)) {
       pushWindow(s.distMm - refMm, (float)(s.light - refLight));
-      Features f;
-      if (computeFeatures(f)) modelClass = classify(f);
+      classifyTimed();
     }
 
     Serial.print(millis() - t0);        Serial.print(',');
@@ -725,7 +793,8 @@ void recordRun() {
     Serial.print(s.missed);             Serial.print(',');
     Serial.print(labelIdx);             Serial.print(',');
     Serial.print(sessionId);            Serial.print(',');
-    Serial.println(modelClass);
+    Serial.print(modelClass);           Serial.print(',');
+    Serial.println(inferLastUs);
 
     rows++;
     renderRun("REC", rows);
@@ -733,6 +802,7 @@ void recordRun() {
 
   Serial.print(F("# RUN_END rows=")); Serial.print(rows);
   Serial.print(F(" dropouts="));      Serial.println(dropouts);
+  printLatency();
 
   runCount[labelIdx]++;
 
@@ -782,6 +852,17 @@ void setup() {
   }
   if (switchFaulty) Serial.println(F("# switch stuck LOW - disabled for this run"));
 
+  // Restore the operator's saved setup if flash holds a valid one. This is what
+  // makes "set it once, come back next week" true rather than aspirational.
+  if (loadSetup(refMm, refLight)) {
+    armed = true;
+    Serial.print(F("# SETUP RESTORED FROM FLASH "));
+    Serial.print(refMm, 0);   Serial.print(F(" mm / "));
+    Serial.print(refLight);   Serial.println(F(" counts"));
+  } else {
+    Serial.println(F("# no stored setup - hold the button to capture one"));
+  }
+
   runDecisionSelfTest(Serial);
   selfTestReported = (bool)Serial;
   Serial.println(F("ref_mm,live_mm,diff_mm,dist_verdict,missed,ref_ldr,live_ldr,diff_ldr,light_verdict,model_class"));
@@ -793,6 +874,11 @@ void loop() {
   // host actually appears - the result should be observable whenever you attach
   // a monitor, not only if you win a race against the board.
   if (!selfTestReported && Serial) {
+    if (armed) {
+      Serial.print(F("# SETUP RESTORED FROM FLASH "));
+      Serial.print(refMm, 0);   Serial.print(F(" mm / "));
+      Serial.print(refLight);   Serial.println(F(" counts"));
+    }
     runDecisionSelfTest(Serial);
     Serial.println(F("ref_mm,live_mm,diff_mm,dist_verdict,missed,ref_ldr,live_ldr,diff_ldr,light_verdict,model_class"));
     selfTestReported = true;
@@ -819,8 +905,7 @@ void loop() {
     // here would put the model somewhere its training data never went.
     if (s.distMm > 0 && lightReadingValid(s.light)) {
       pushWindow(s.distMm - refMm, (float)(s.light - refLight));
-      Features f;
-      if (computeFeatures(f)) modelClass = classify(f);
+      classifyTimed();
     }
   }
 

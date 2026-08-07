@@ -1,0 +1,11 @@
+{
+  "sketch": "03_inference",
+  "fqbn": "arduino:mbed_nano:nano33ble",
+  "recorded": "2026-08-07T18:39:08",
+  "flash_bytes": 120896,
+  "flash_max_bytes": 983040,
+  "flash_pct": 12.3,
+  "ram_bytes": 46696,
+  "ram_max_bytes": 262144,
+  "ram_pct": 17.8
+}

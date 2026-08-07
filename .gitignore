@@ -18,6 +18,12 @@ desktop.ini
 # Large generated artefacts - regenerate with tools/train_offline.py
 models/*.pkl
 
+# Submission zips - rebuilt by tools/package_submission.py, and committing them
+# means the repo carries a stale copy of whatever was packaged last. The receipts
+# in deliverables/receipts/ ARE committed: they are proof of submission and cannot
+# be regenerated.
+deliverables/*.zip
+
 # NOTE: data/ is deliberately NOT ignored. The dataset is the one artefact that
 # cannot be regenerated from a keyboard, and it is a required submission component.
 # Commit it. See risk R-13.

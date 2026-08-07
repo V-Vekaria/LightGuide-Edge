@@ -1,5 +1,10 @@
 # 01 — Roadmap (LOCKED)
 
+> **Historical planning document.** Written 31 July and kept as the record of what was
+> planned and when. It is not the current status — for that, read the progress tracker in
+> `AGENTS.md` §9. The tilt channel referenced in places below was cut on 7 August
+> (`docs/12-SCOPE-CHANGE-TILT.md`).
+
 **Locked 31 July 2026. Deadline 12:00 noon 9 August 2026. Nine days.**
 Target submission: **8 August**, one day early, so a failed upload is recoverable.
 
@@ -83,7 +88,7 @@ it gates everything downstream.
 **Gate G2:** `tools/dataset_report.py` prints ≥250/class, ≥3 sessions, zero NaNs, and the
 held-out session is disjoint.
 
-**Contingency:** if time runs short, cut to 200/class **evenly across all six** rather than
+**Contingency:** if time runs short, cut to 200/class **evenly across all classes** rather than
 250 on four classes and 80 on two. Balance matters more than raw volume. Never fabricate
 or duplicate samples to hit the count — that is academic misconduct, and augmentation must
 be declared as augmentation.
@@ -100,7 +105,7 @@ be declared as augmentation.
 - [ ] **M2** autoencoder anomaly detector (train on `optimal` only; threshold on reconstruction error)
 - [ ] **M3** windowed sequence model
 - [ ] 5-fold stratified CV **and** session-held-out test for every model
-- [ ] **Ablation:** distance-only → +LDR → +IMU
+- [ ] **Ablation:** distance-only → light-only → both (the `+IMU` arm is cut, see docs/12)
 - [ ] Confusion matrices, per-class P/R/F1, learning curves → `reports/figures/`
 
 **Gate G3:** `reports/offline_results.md` contains one comparison table covering all four
@@ -139,7 +144,7 @@ must still exist even if the shipped model came from elsewhere.
 - [ ] Instrument `micros()` around inference; print latency every N cycles
 
 **Gate G5:** device runs **standalone on USB power with no serial monitor attached** and
-responds correctly to all six conditions by hand.
+responds correctly to all five conditions by hand.
 
 **Contingency:** if RAM is tight, drop M3's window length or reduce hidden units — do not
 drop the OLED, it is the demo.

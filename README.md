@@ -5,7 +5,7 @@ COM683 Edge & Embedded Intelligence — Coursework 2 (60%) — Ulster University
 
 Photographers can't reliably recreate a physical lighting setup — distance, brightness and
 angle — from one session to the next. Lighting apps store *digital* state; none guide the
-physical placement of the stand. LightGuide Edge senses distance, light level and tilt,
+physical placement of the stand. LightGuide Edge senses distance and light level,
 classifies the setup against a saved reference with a model running entirely on an Arduino
 Nano 33 BLE Sense, and tells the photographer what to adjust.
 
