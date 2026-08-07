@@ -28,3 +28,6 @@ deliverables/*.zip
 # cannot be regenerated from a keyboard, and it is a required submission component.
 # Commit it. See risk R-13.
 data/raw/session99_*.csv
+
+# Edge Impulse ingestion key - never commit
+.ei_key
