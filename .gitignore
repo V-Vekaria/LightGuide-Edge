@@ -31,3 +31,7 @@ data/raw/session99_*.csv
 
 # Edge Impulse ingestion key - never commit
 .ei_key
+
+# deck build (pptxgenjs)
+node_modules/
+package-lock.json
