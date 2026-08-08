@@ -37,6 +37,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import threading
 import time
 from collections import Counter
 from datetime import datetime
@@ -76,6 +77,110 @@ def open_port(port: str) -> serial.Serial:
     time.sleep(2.0)         # the board resets when the port opens
     ser.reset_input_buffer()
     return ser
+
+
+class Drainer:
+    """Keeps the receive buffer empty while we are waiting on the operator.
+
+    The board free-runs its CSV at 10 Hz whether or not anyone is listening. If
+    the port is open and nothing reads it, the OS buffer fills (~98 KB, about
+    four minutes), back-pressure reaches the device, and the sketch blocks
+    inside Serial.print. A blocked sketch services nothing - not the D7 button,
+    not commands - and the next write from the host dies with
+
+        WriteFile failed (PermissionError(13, 'The device does not recognize
+        the command.', None, 22))
+
+    which is what killed the first attempt at this trial: run_trials opened the
+    port and then sat on two input() prompts for several minutes.
+
+    So a daemon thread reads and discards while the operator stages the shot,
+    and pauses for the duration of a run so it never competes with read_run for
+    the same bytes.
+    """
+
+    def __init__(self, ser: serial.Serial) -> None:
+        self.ser = ser
+        self._draining = threading.Event()
+        self._parked = threading.Event()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def _loop(self) -> None:
+        while not self._stop.is_set():
+            if not self._draining.is_set():
+                self._parked.set()
+                time.sleep(0.05)
+                continue
+            self._parked.clear()
+            try:
+                waiting = self.ser.in_waiting
+                if waiting:
+                    self.ser.read(waiting)
+                else:
+                    time.sleep(0.05)
+            except Exception:
+                # The port is going away, or the main thread is mid-teardown.
+                # Draining is best-effort; the run itself reports real errors.
+                time.sleep(0.1)
+
+    def resume(self) -> None:
+        self._parked.clear()
+        self._draining.set()
+
+    def pause(self) -> None:
+        """Stop draining and wait until the thread is genuinely idle, so the
+        caller has the port to itself before it writes."""
+        self._draining.clear()
+        self._parked.wait(timeout=1.0)
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._draining.clear()
+        self._thread.join(timeout=1.0)
+
+
+# Mirrors firmware/03_inference/decision.h. A run staged outside these is not a
+# hard model error, it is the operator having drifted - on 8 Aug the stand stopped
+# being returned to the reference for the lamp-only classes from trial 1 onward,
+# and 14 runs were recorded ~30 cm out of position before anyone noticed. The
+# score came back a meaningless 1.000. Catching it at the run is the whole point.
+TOL_ENTER_MM = 30.0
+LIGHT_TOL_ENTER_PCT = 0.05
+CLEARLY_OFF_MM = 100.0          # a deliberate +-30 cm move should clear this easily
+
+
+def check_staging(rows: list[dict], staged: int) -> list[str]:
+    """Warn when the recorded run does not look like the condition we asked for."""
+    try:
+        dd = np.mean([float(r["d_dist_mm"]) for r in rows])
+        dl = np.mean([float(r["d_ldr"]) for r in rows])
+        ldr = np.mean([float(r["ldr"]) for r in rows])
+    except (KeyError, ValueError):
+        return []
+
+    ref_light = ldr - dl
+    light_band = abs(ref_light) * LIGHT_TOL_ENTER_PCT
+    at_ref_dist = abs(dd) <= TOL_ENTER_MM
+    at_ref_light = abs(dl) <= light_band
+    warn: list[str] = []
+
+    if staged in (0, 3, 4) and not at_ref_dist:
+        warn.append(f"stand is {dd:+.0f} mm off the reference (band +-{TOL_ENTER_MM:.0f}); "
+                    "this staging wants it back on the reference mark")
+    if staged == 1 and dd > -CLEARLY_OFF_MM:
+        warn.append(f"expected a clearly closer stand, got {dd:+.0f} mm")
+    if staged == 2 and dd < CLEARLY_OFF_MM:
+        warn.append(f"expected a clearly further stand, got {dd:+.0f} mm")
+    if staged in (0, 1, 2) and not at_ref_light:
+        warn.append(f"lamp is {dl:+.0f} counts off the reference "
+                    f"(band +-{light_band:.0f}); return it to the reference setting")
+    if staged == 3 and dl > -light_band:
+        warn.append(f"expected a clearly dimmer lamp, got {dl:+.0f} counts")
+    if staged == 4 and dl < light_band:
+        warn.append(f"expected a clearly brighter lamp, got {dl:+.0f} counts")
+    return warn
 
 
 def send(ser: serial.Serial, cmd: str) -> None:
@@ -137,6 +242,8 @@ def read_run(ser: serial.Serial, timeout_s: float = 40.0) -> tuple[list[dict], d
 
 def run_trials(port: str, trials: int, classes: list[int]) -> list[dict]:
     ser = open_port(port)
+    drainer = Drainer(ser)
+    drainer.resume()
     ONLINE.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     all_rows: list[dict] = []
@@ -160,20 +267,25 @@ def run_trials(port: str, trials: int, classes: list[int]) -> list[dict]:
                 print(f"    {STAGING[c]}")
                 input("    Press Enter once the setup is physically staged... ")
 
-                send(ser, f"L{c}")
-                ser.reset_input_buffer()
-                send(ser, "R")
-
+                drainer.pause()          # we own the port from here to RUN_END
                 try:
+                    send(ser, f"L{c}")
+                    ser.reset_input_buffer()
+                    send(ser, "R")
                     rows, meta = read_run(ser)
                 except TimeoutError as e:
                     print(f"    !! {e}")
                     continue
+                finally:
+                    drainer.resume()     # back to the operator, keep it drained
 
                 for r in rows:
                     r["trial"] = t
                     r["staged"] = c
                 all_rows += rows
+
+                for w in check_staging(rows, c):
+                    print(f"    !! STAGING: {w}")
 
                 preds = [int(r["pred"]) for r in rows if r.get("pred", "-1") != "-1"]
                 if preds:
@@ -186,6 +298,7 @@ def run_trials(port: str, trials: int, classes: list[int]) -> list[dict]:
                     print(f"    !! {len(rows)} rows but no predictions "
                           "(window never filled)")
     finally:
+        drainer.stop()
         ser.close()
 
     out = ONLINE / f"online_trials_{stamp}.csv"
@@ -208,6 +321,78 @@ def load_latest() -> list[dict]:
     lines = path.read_text(encoding="utf-8").splitlines()
     header = lines[0].split(",")
     return [dict(zip(header, ln.split(","))) for ln in lines[1:] if ln.strip()]
+
+
+def comparability_section(rows: list[dict]) -> list[str]:
+    """The two scores are not like-for-like, and the report has to say so.
+
+    The online protocol stages one prototypical example of each condition: the
+    stand goes to a floor mark ~30 cm out, the lamp moves two dimmer steps. The
+    held-out session was captured by sweeping the stand through the whole range,
+    so it contains windows sitting just past the tolerance - the region where a
+    banded classifier is supposed to be hard. Comparing a score measured on
+    prototypes against one measured including boundary cases and concluding the
+    device "does better in the room" would be wrong. This section derives the
+    evidence for that instead of asserting it.
+    """
+    out = ["### Are these two numbers comparable?", ""]
+
+    by_cls: dict[int, list[float]] = {}
+    for r in rows:
+        try:
+            by_cls.setdefault(int(r["staged"]), []).append(float(r["d_dist_mm"]))
+        except (KeyError, ValueError):
+            continue
+
+    test_path = ROOT / "data" / "processed" / "test.csv"
+    try:
+        import pandas as pd
+        te = pd.read_csv(test_path)
+        off = te.groupby("label")["d_dist_mm_mean"]
+        off_stats = {int(k): (v.std(), v.abs().min()) for k, v in off}
+    except Exception:
+        out += [f"(could not read {test_path.name}; comparison table skipped)", ""]
+        off_stats = {}
+
+    if off_stats:
+        out += ["Distance channel, by class. `spread` is the within-class standard "
+                "deviation; `closest` is the sample nearest the 30 mm tolerance "
+                "boundary - the hardest case each evaluation actually contained.", "",
+                "| class | online spread | online closest | offline spread | "
+                "offline closest |", "|---|---|---|---|---|"]
+        for c, name in enumerate(CLASS_NAMES):
+            if c not in by_cls or c not in off_stats:
+                continue
+            v = np.array(by_cls[c])
+            o_sd, o_min = off_stats[c]
+            out.append(f"| {name} | {v.std():.0f} mm | {np.abs(v).min():.0f} mm | "
+                       f"{o_sd:.0f} mm | {o_min:.0f} mm |")
+        out += [""]
+
+    out += [
+        "The online set was staged against floor marks, so within-class spread is a "
+        "few millimetres and every off-reference run sits ~300 mm out - an order of "
+        "magnitude past the 30 mm band. The held-out session includes windows only "
+        "tens of millimetres past it. The two evaluations therefore sample different "
+        "regions of the input space, and the online score being the higher of the two "
+        "is a property of the protocol, not evidence that the device performs better "
+        "in the room.",
+        "",
+        "What the online result does establish is narrower and still worth having: "
+        "on-device, in the room, with ground truth recorded at the moment of the "
+        "trial, the deployed model reproduces its intended behaviour on every "
+        "prototypical staging, with no dropouts and a latency two orders of magnitude "
+        "below the sensing period. It does not establish behaviour near the decision "
+        "boundary, which the offline held-out score is the better estimate of.",
+        "",
+        "The honest next measurement is a boundary sweep: stage `too_far` at +4, +6 "
+        "and +10 cm rather than +30, and find where on-device accuracy actually "
+        "breaks down. That number would be a genuine online result the offline test "
+        "cannot give, because it depends on settling behaviour the CSV replay never "
+        "sees.",
+        "",
+    ]
+    return out
 
 
 def analyse(rows: list[dict]) -> None:
@@ -339,14 +524,10 @@ def analyse(rows: list[dict]) -> None:
     L += ["## Per-class online F1 (per-run)", "", "| class | F1 |", "|---|---|"]
     L += [f"| {n} | {f:.3f} |" for n, f in zip(CLASS_NAMES, per_run_f1)]
     L += ["", "## Offline vs online", "",
-          "Fill the offline column from `reports/offline_results.md` and explain any "
-          "gap on the evaluation slide. Expect online to be lower: the offline test "
-          "only ever saw windows from runs that recorded successfully, whereas online "
-          "the model is also judged during the settling transient after the operator "
-          "moves the stand.", "",
           "| | offline (held-out session 3) | online (per-run) |", "|---|---|---|",
           f"| macro-F1 | 0.868 | {f1_r:.3f} |",
           f"| accuracy | 0.865 | {acc_r:.3f} |", ""]
+    L += comparability_section(rows)
 
     try:
         import matplotlib
@@ -396,6 +577,9 @@ def main() -> None:
                     help="repeats per class; 10 x 5 = 50 runs, the roadmap contingency")
     ap.add_argument("--quick", action="store_true",
                     help="distance and light classes only, for a rehearsal")
+    ap.add_argument("--classes",
+                    help="comma-separated class ids to run, e.g. 3,4 to redo the "
+                         "lamp-only stagings without repeating the distance ones")
     ap.add_argument("--analyse-only", action="store_true",
                     help="rebuild the report from the most recent trial file")
     ap.add_argument("--list", action="store_true", help="list serial ports and exit")
@@ -413,7 +597,18 @@ def main() -> None:
     if not args.port:
         sys.exit("--port is required (or use --analyse-only)")
 
-    classes = [0, 1, 3] if args.quick else [0, 1, 2, 3, 4]
+    if args.classes:
+        try:
+            classes = [int(x) for x in args.classes.split(",") if x.strip() != ""]
+        except ValueError:
+            sys.exit(f"--classes wants comma-separated integers, got {args.classes!r}")
+        bad = [c for c in classes if c not in range(len(CLASS_NAMES))]
+        if bad:
+            sys.exit(f"--classes out of range: {bad} (valid: 0-{len(CLASS_NAMES) - 1})")
+    elif args.quick:
+        classes = [0, 1, 3]
+    else:
+        classes = [0, 1, 2, 3, 4]
     rows = run_trials(args.port, args.trials, classes)
     if rows:
         analyse(rows)

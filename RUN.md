@@ -59,6 +59,29 @@ py -3 tools/online_trial.py --port COM4 --trials 10
 per-run confusion matrices, measured inference latency and the footprint table. Rehearse the
 flow with `--trials 2 --quick` first.
 
+After each run the harness prints `!! STAGING:` if the recorded run does not match the
+condition it asked for — stand off the reference mark for a lamp-only class, or a lamp
+change too small to clear the ±5% band. **Fix the staging and repeat that trial when you
+see it.** On 8 August this caught 14 runs staged ~30 cm out of position and 3 `overlit`
+runs moved only one dimmer step (~+105 counts, inside the correct band and therefore not
+`overlit` at all).
+
+To re-collect only the affected classes rather than repeating all 40 runs:
+
+```bash
+py -3 tools/online_trial.py --port COM4 --trials 8 --classes 3,4
+```
+
+**Do not re-save the reference between sittings** — the runs are only comparable while
+they share one baseline. Then combine whole classes from the sitting each was staged
+correctly in, and re-validate:
+
+```bash
+py -3 tools/merge_online.py data/online/A.csv:0,1,2 data/online/B.csv:3 data/online/C.csv:4
+```
+
+`--analyse-only` then picks up the combined file, since it sorts last by name.
+
 **3. Edge Impulse — Gate P5 · ~45 minutes**
 
 A link to a **public** EI project is a required part of the Code component. The dataset is
@@ -120,6 +143,7 @@ arduino-cli monitor -p COM4 --config baudrate=115200
 | `tools/dataset_report.py` | Gate G2 quality check — fails loudly if the dataset is short or unbalanced | nothing (reads files) |
 | `tools/train_offline.py` | Trains M0–M3, baselines, ablation, confusion matrices | nothing (reads files) |
 | `tools/online_trial.py` | **Gate G6.** Drives live trials, builds the online confusion matrix and latency table | `03_inference` |
+| `tools/merge_online.py` | Combines online captures class-by-class, re-runs the staging check, records provenance | nothing (reads files) |
 | `tools/make_figures.py` | Presentation figures: traces, feature space, model comparison, ablation | nothing (reads files) |
 | `tools/export_edge_impulse.py` | Writes the EI upload set, train/test split preserved | nothing (reads files) |
 | `tools/export_tree.py` | Regenerates `firmware/03_inference/model.h` from the trained tree | nothing (reads files) |
