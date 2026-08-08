@@ -44,10 +44,14 @@ const W = 13.333;
 const M = 0.6;                          // page margin
 const CW = W - 2 * M;                   // content width
 
-/** Photos are optional; the deck must build cleanly on a fresh clone. */
-function rig(name) {
-  const p = path.join(RIG, name);
-  return fs.existsSync(p) ? p : null;
+/** Photos are optional; the deck must build cleanly on a fresh clone.
+ *  Takes a base name and finds whatever extension the camera happened to use. */
+function rig(base) {
+  for (const ext of [".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"]) {
+    const p = path.join(RIG, base + ext);
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
 }
 function fig(name) {
   const p = path.join(FIG, name);
@@ -196,7 +200,7 @@ function caption(s, x, y, w, text) {
   const s = pres.addSlide();
   titleOf(s, "Data collection methodology", "1,832 labelled samples · 45 runs · 3 sessions · 5 classes · 0 dropouts, 0 NaNs");
 
-  const photo = rig("rig_overview.jpg") || rig("rig_overview.png");
+  const photo = rig("rig_overview");
   const textW = photo ? 7.4 : CW;
 
   bullets(s, M, 1.68, textW, 3.05, [
@@ -388,12 +392,18 @@ function caption(s, x, y, w, text) {
     ["0:46", "Brighten above the reference", "OVERLIT — REDUCE OUTPUT"],
     ["0:54", "Restore the reference setup", "OPTIMAL"],
   ];
+  const oled = rig("oled_optimal");
+  const seqW = oled ? 4.15 : 6.0;      // narrow the table when the photo is there
   seq.forEach((r, i) => {
     const y = 2.15 + i * 0.66;
     s.addText(r[0], { x: M, y, w: 0.75, h: 0.42, fontFace: BODY, fontSize: 13, color: MUTED, margin: 0 });
-    s.addText(r[1], { x: 1.4, y, w: 5.1, h: 0.42, fontFace: BODY, fontSize: 13, color: PAPER, margin: 0 });
-    s.addText(r[2], { x: 6.7, y, w: 6.0, h: 0.42, fontFace: BODY, fontSize: 13, bold: true, color: AMBER, margin: 0 });
+    s.addText(r[1], { x: 1.4, y, w: 3.5, h: 0.42, fontFace: BODY, fontSize: 13, color: PAPER, margin: 0 });
+    s.addText(r[2], { x: 5.05, y, w: seqW, h: 0.42, fontFace: BODY, fontSize: 13, bold: true, color: AMBER, margin: 0 });
   });
+  if (oled) {
+    s.addImage({ path: oled, x: 9.45, y: 2.05, w: 3.28, h: 4.35,
+                 sizing: { type: "contain", w: 3.28, h: 4.35 } });
+  }
   s.addText("All five classes in under 60 seconds, hardware visibly responding to a physical change.", {
     x: M, y: 6.72, w: CW, h: 0.4, fontFace: BODY, fontSize: 12, italic: true, color: "9AA3B2", margin: 0,
   });
@@ -456,7 +466,9 @@ function caption(s, x, y, w, text) {
 
 pres.writeFile({ fileName: OUT }).then(() => {
   console.log("wrote", OUT);
-  if (!rig("rig_overview.jpg") && !rig("rig_overview.png")) {
-    console.log("NOTE: reports/figures/rig/rig_overview.jpg not found - slide 5 built without the rig photo.");
+  for (const [name, slide] of [["rig_overview", 5], ["oled_optimal", 13]]) {
+    if (!rig(name)) {
+      console.log(`NOTE: reports/figures/rig/${name}.jpg not found - slide ${slide} built without it.`);
+    }
   }
 });
