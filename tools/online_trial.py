@@ -37,13 +37,14 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-import threading
 import time
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
 import numpy as np
+
+from serial_link import BAUD, Drainer, open_port
 
 try:
     import serial
@@ -57,7 +58,6 @@ REPORTS = ROOT / "reports"
 FIGURES = REPORTS / "figures"
 
 CLASS_NAMES = ["optimal", "too_close", "too_far", "underlit", "overlit"]
-BAUD = 115200
 
 # Staging instructions, so the operator runs the same protocol on trial 40 as on
 # trial 1. Drift in how a condition is staged shows up as model error and gets
@@ -69,76 +69,6 @@ STAGING = {
     3: "Reference position; DIM the lamp well below the reference.",
     4: "Reference position; BRIGHTEN the lamp well above the reference.",
 }
-
-
-def open_port(port: str) -> serial.Serial:
-    ser = serial.Serial(port, BAUD, timeout=2)
-    ser.dtr = True          # the Nano's native USB needs DTR asserted (RUN.md)
-    time.sleep(2.0)         # the board resets when the port opens
-    ser.reset_input_buffer()
-    return ser
-
-
-class Drainer:
-    """Keeps the receive buffer empty while we are waiting on the operator.
-
-    The board free-runs its CSV at 10 Hz whether or not anyone is listening. If
-    the port is open and nothing reads it, the OS buffer fills (~98 KB, about
-    four minutes), back-pressure reaches the device, and the sketch blocks
-    inside Serial.print. A blocked sketch services nothing - not the D7 button,
-    not commands - and the next write from the host dies with
-
-        WriteFile failed (PermissionError(13, 'The device does not recognize
-        the command.', None, 22))
-
-    which is what killed the first attempt at this trial: run_trials opened the
-    port and then sat on two input() prompts for several minutes.
-
-    So a daemon thread reads and discards while the operator stages the shot,
-    and pauses for the duration of a run so it never competes with read_run for
-    the same bytes.
-    """
-
-    def __init__(self, ser: serial.Serial) -> None:
-        self.ser = ser
-        self._draining = threading.Event()
-        self._parked = threading.Event()
-        self._stop = threading.Event()
-        self._thread = threading.Thread(target=self._loop, daemon=True)
-        self._thread.start()
-
-    def _loop(self) -> None:
-        while not self._stop.is_set():
-            if not self._draining.is_set():
-                self._parked.set()
-                time.sleep(0.05)
-                continue
-            self._parked.clear()
-            try:
-                waiting = self.ser.in_waiting
-                if waiting:
-                    self.ser.read(waiting)
-                else:
-                    time.sleep(0.05)
-            except Exception:
-                # The port is going away, or the main thread is mid-teardown.
-                # Draining is best-effort; the run itself reports real errors.
-                time.sleep(0.1)
-
-    def resume(self) -> None:
-        self._parked.clear()
-        self._draining.set()
-
-    def pause(self) -> None:
-        """Stop draining and wait until the thread is genuinely idle, so the
-        caller has the port to itself before it writes."""
-        self._draining.clear()
-        self._parked.wait(timeout=1.0)
-
-    def stop(self) -> None:
-        self._stop.set()
-        self._draining.clear()
-        self._thread.join(timeout=1.0)
 
 
 # Mirrors firmware/03_inference/decision.h. A run staged outside these is not a

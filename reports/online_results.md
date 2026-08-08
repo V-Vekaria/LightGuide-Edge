@@ -1,6 +1,6 @@
 # Online results
 
-Generated 2026-08-08 12:25 · **40 runs**, **1648 classified samples**
+Generated 2026-08-08 12:33 · **40 runs**, **1648 classified samples**
 
 Gate G6. Every row below was produced by the device in the room, with the operator staging each condition physically and the staged label recorded at the moment of the trial. Nothing here is replayed from a file.
 

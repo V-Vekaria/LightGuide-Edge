@@ -81,11 +81,7 @@ QUICK_DISTANCES_CM = [40, 70, 100, 150, 220, 300]
 # Acquisition
 # ---------------------------------------------------------------------------
 
-def open_port(port: str) -> serial.Serial:
-    ser = serial.Serial(port, BAUD, timeout=2)
-    time.sleep(2.0)
-    ser.reset_input_buffer()
-    return ser
+from serial_link import Drainer, open_port  # noqa: E402  (see module docstring)
 
 
 def average_step(ser: serial.Serial) -> dict | None:
@@ -140,38 +136,53 @@ def sweep(ser: serial.Serial, distances_cm: list[float]) -> list[dict]:
     print("  * room light kept constant throughout")
     print("\nAt each distance you will be asked for a lamp-ON and a lamp-OFF reading.")
     print("The OFF reading is the ambient baseline and gets subtracted.\n")
-    input("Press Enter when the rig is set up... ")
+    # Every prompt below is an unbounded wait on a human, and the board is
+    # streaming the whole time. Drainer keeps the buffer empty so the sketch
+    # never blocks on a full pipe - see tools/serial_link.py.
+    drainer = Drainer(ser)
+    ask = drainer.prompt
+
+    ask("Press Enter when the rig is set up... ")
 
     rows = []
-    for d_cm in distances_cm:
-        print(f"\n--- {d_cm} cm ---")
-        input(f"  Position at {d_cm} cm, lamp ON, then press Enter... ")
-        on = average_step(ser)
-        if on is None:
-            continue
+    try:
+        for d_cm in distances_cm:
+            print(f"\n--- {d_cm} cm ---")
+            ask(f"  Position at {d_cm} cm, lamp ON, then press Enter... ")
+            on = average_step(ser)
+            if on is None:
+                continue
 
-        input("  Now switch the lamp OFF (do not move anything), press Enter... ")
-        off = average_step(ser)
-        if off is None:
-            continue
+            ask("  Now switch the lamp OFF (do not move anything), press Enter... ")
+            off = average_step(ser)
+            if off is None:
+                continue
 
-        input("  Lamp back ON, press Enter to continue... ")
+            ask("  Lamp back ON, press Enter to continue... ")
 
-        rows.append({
-            "distance_cm": d_cm,
-            "ldr_on": on["ldr_mean"], "ldr_on_sd": on["ldr_sd"],
-            "ldr_off": off["ldr_mean"], "ldr_off_sd": off["ldr_sd"],
-            "apds_on": on["apds_mean"], "apds_off": off["apds_mean"],
-            "us_mm": on["us_mean"],
-        })
-        print(f"  -> lamp on {on['ldr_mean']:.0f} +/- {on['ldr_sd']:.1f} counts, "
-              f"ambient {off['ldr_mean']:.0f}")
+            rows.append({
+                "distance_cm": d_cm,
+                "ldr_on": on["ldr_mean"], "ldr_on_sd": on["ldr_sd"],
+                "ldr_off": off["ldr_mean"], "ldr_off_sd": off["ldr_sd"],
+                "apds_on": on["apds_mean"], "apds_off": off["apds_mean"],
+                "us_mm": on["us_mean"],
+            })
+            print(f"  -> lamp on {on['ldr_mean']:.0f} +/- {on['ldr_sd']:.1f} counts, "
+                  f"ambient {off['ldr_mean']:.0f}")
 
-        if on["ldr_mean"] > 4050:
-            print("  !! LDR is saturating high - reduce the fixed resistor and restart "
-                  "(risk R-07)")
-        if on["ldr_mean"] < 30:
-            print("  !! LDR is pinned low - increase the fixed resistor and restart")
+            if on["ldr_mean"] > 4050:
+                print("  !! LDR is saturating high - reduce the fixed resistor and "
+                      "restart (risk R-07)")
+            if on["ldr_mean"] < 30:
+                print("  !! LDR is pinned low - increase the fixed resistor and restart")
+    finally:
+        drainer.stop()
+
+    # Every step can bail out on `continue`, so an empty sweep is reachable -
+    # usually the wrong sketch. Say that rather than dying on rows[0].
+    if not rows:
+        sys.exit("No usable readings in the whole sweep. Is the board running "
+                 "firmware/01b_calibration?")
 
     CAL.mkdir(parents=True, exist_ok=True)
     path = CAL / "ldr_sweep.csv"
