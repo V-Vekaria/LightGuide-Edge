@@ -278,11 +278,7 @@ def fit(rows: list[dict]) -> dict:
     us_ok = us > 0
     us_fit = None
     if us_ok.sum() >= 3:
-        slope, off = np.polyfit(d_cm[us_ok] * 10.0, us[us_ok], 1)
-        resid = us[us_ok] - (slope * d_cm[us_ok] * 10.0 + off)
-        us_fit = {"slope": float(slope), "offset": float(off),
-                  "rmse_mm": float(np.sqrt(np.mean(resid ** 2))),
-                  "n": int(us_ok.sum())}
+        us_fit = fit_ultrasonic(d_cm[us_ok] * 10.0, us[us_ok])
 
     # Does the independent APDS channel agree with the LDR about the same change?
     apds = np.array([r["apds_on"] for r in rows], dtype=float)
@@ -296,6 +292,60 @@ def fit(rows: list[dict]) -> dict:
             "intercept": float(intercept), "r2": float(r2),
             "resid": resid, "x_plot": x_plot,
             "us_fit": us_fit, "apds_corr": apds_corr}
+
+
+BEAM_HALF_ANGLE_DEG = 7.5    # HC-SR04, ~15 degree cone
+
+
+def fit_ultrasonic(tape_mm: np.ndarray, us_mm: np.ndarray) -> dict:
+    """Straight-line fit of reported distance against the tape, with the echo
+    sanity check that a bare polyfit does not do.
+
+    The target here is a ~200 mm lamp panel, and the beam cone widens as
+    2*d*tan(7.5 deg) - 527 mm at 2 m. Once the cone is much wider than the
+    target, a specular flat panel can return too little energy and the detector
+    latches onto whatever stands behind it. That reads *longer* than the truth,
+    unlike the small short bias seen everywhere else, so it is identifiable.
+
+    On 8 August this happened at exactly one point: the 200 cm reading came back
+    +134 mm, against residuals of -1 to -22 mm at the other five. Absorbed into
+    the fit it turned slope 1.004 into 1.071 and RMSE 7.2 mm into 37.2 mm, which
+    would have been reported as a 7% speed-of-sound error that does not exist.
+
+    Outliers are flagged by median absolute deviation - a fixed rule applied to
+    every point, not a licence to drop whatever is inconvenient - and both fits
+    are returned so the report can show the excluded point rather than hide it.
+    """
+    def line(t, u):
+        slope, off = np.polyfit(t, u, 1)
+        resid = u - (slope * t + off)
+        return {"slope": float(slope), "offset": float(off),
+                "rmse_mm": float(np.sqrt(np.mean(resid ** 2))),
+                "n": int(len(t)), "resid": resid}
+
+    full = line(tape_mm, us_mm)
+
+    # Flag against the IDENTITY line, not the fitted one. A single bad point drags
+    # the fit toward itself, which shrinks its own residual and inflates the MAD
+    # meant to catch it - the outlier masks itself and nothing is flagged. The
+    # physical expectation for a distance sensor is that it reports the distance,
+    # so deviation from tape is the honest residual and is immune to that.
+    dev = us_mm - tape_mm
+    med = np.median(dev)
+    mad = np.median(np.abs(dev - med))
+    flagged = (np.abs(dev - med) > 5.0 * mad) if mad > 0 else np.zeros_like(dev, bool)
+
+    out = dict(full)
+    out["dev"] = dev
+    out["tape_mm"] = tape_mm
+    out["us_mm"] = us_mm
+    out["flagged"] = flagged
+    out["beam_mm"] = 2.0 * tape_mm * np.tan(np.radians(BEAM_HALF_ANGLE_DEG))
+    out["clean"] = None
+    if flagged.any() and (~flagged).sum() >= 3:
+        out["clean"] = line(tape_mm[~flagged], us_mm[~flagged])
+        out["valid_to_mm"] = float(tape_mm[~flagged].max())
+    return out
 
 
 def plot(f: dict) -> None:
@@ -429,15 +479,58 @@ def report(f: dict) -> None:
     L += ["## Ultrasonic calibration", ""]
     if f["us_fit"]:
         u = f["us_fit"]
-        L += [f"Reported distance vs tape measure, n={u['n']}:", "",
-              "| parameter | value | ideal |", "|---|---|---|",
-              f"| slope | {u['slope']:.4f} | 1.0 |",
-              f"| offset | {u['offset']:.1f} mm | 0 |",
-              f"| RMSE | **{u['rmse_mm']:.1f} mm** | - |", "",
-              "Slope departing from 1.0 indicates a speed-of-sound error (temperature); "
-              "a non-zero offset indicates a fixed trigger/echo latency. Both are "
-              "correctable in firmware, and quoting the RMSE gives the distance channel "
-              "an honest error bar on the evaluation slide."]
+        L += ["Reported distance vs tape measure, per point:", "",
+              "| tape (mm) | reported (mm) | reported - tape (mm) | beam width (mm) | |",
+              "|---|---|---|---|---|"]
+        for t, r, rs, bw, fl in zip(u["tape_mm"], u["us_mm"], u["dev"],
+                                    u["beam_mm"], u["flagged"]):
+            L.append(f"| {t:.0f} | {r:.1f} | {rs:+.1f} | {bw:.0f} | "
+                     f"{'**excluded**' if fl else ''} |")
+        L += [""]
+
+        clean = u["clean"]
+        L += ["| parameter | all points | " +
+              ("excluding flagged | ideal |" if clean else "ideal |"),
+              "|---|---|---|---|" if clean else "|---|---|---|"]
+        if clean:
+            L += [f"| slope | {u['slope']:.4f} | **{clean['slope']:.4f}** | 1.0 |",
+                  f"| offset | {u['offset']:.1f} mm | **{clean['offset']:.1f} mm** | 0 |",
+                  f"| RMSE | {u['rmse_mm']:.1f} mm | **{clean['rmse_mm']:.1f} mm** | - |",
+                  f"| n | {u['n']} | {clean['n']} | - |", ""]
+        else:
+            L += [f"| slope | {u['slope']:.4f} | 1.0 |",
+                  f"| offset | {u['offset']:.1f} mm | 0 |",
+                  f"| RMSE | **{u['rmse_mm']:.1f} mm** | - |",
+                  f"| n | {u['n']} | - |", ""]
+
+        if clean:
+            L += [f"One point was flagged by the median-absolute-deviation rule applied "
+                  f"to every point (|residual - median| > 5 x MAD). It is the only "
+                  f"reading longer than the tape; every other point reads slightly "
+                  f"short. That asymmetry is the signature of the echo returning from "
+                  f"the background rather than the target: the beam cone reaches "
+                  f"{u['beam_mm'][-1]:.0f} mm across at the far end against a lamp "
+                  f"panel roughly 200 mm wide, and a flat panel reflects specularly, so "
+                  f"the panel echo can drop below the detector threshold while a wall "
+                  f"behind it does not.",
+                  "",
+                  f"Including it would report slope {u['slope']:.3f} and RMSE "
+                  f"{u['rmse_mm']:.1f} mm - readable as a {abs(u['slope'] - 1) * 100:.0f}% "
+                  f"speed-of-sound error that is not present. Excluding it, slope is "
+                  f"{clean['slope']:.4f} against an ideal 1.0 and the channel is good to "
+                  f"**{clean['rmse_mm']:.1f} mm RMSE out to "
+                  f"{u.get('valid_to_mm', 0) / 10:.0f} cm**, which covers the whole "
+                  f"operating envelope (reference +-30 cm).",
+                  "",
+                  "The excluded point is a real result about the sensor, not a "
+                  "measurement failure: with a target this size, readings beyond "
+                  f"{u.get('valid_to_mm', 0) / 10:.0f} cm cannot be trusted unless the "
+                  "target fills more of the beam."]
+        else:
+            L += ["Slope departing from 1.0 indicates a speed-of-sound error "
+                  "(temperature); a non-zero offset indicates a fixed trigger/echo "
+                  "latency. Both are correctable in firmware, and quoting the RMSE gives "
+                  "the distance channel an honest error bar on the evaluation slide."]
     else:
         L += ["_No usable ultrasonic readings during the sweep._", "",
               "The ECHO fault in `AGENTS.md` section 13 is unresolved, so the distance "

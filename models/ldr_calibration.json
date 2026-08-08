@@ -1,0 +1,9 @@
+{
+  "gamma": 0.6232805610865945,
+  "intercept": 3.8183112231848306,
+  "r2": 0.9974752550209879,
+  "r_fixed_ohm": 10000.0,
+  "adc_max": 4095.0,
+  "method": "inverse-square-law self-calibration, ambient-subtracted",
+  "absolute_lux": false
+}
