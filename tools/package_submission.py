@@ -173,6 +173,10 @@ def build_dataset() -> Path:
         add_tree(zf, ROOT / "data" / "raw", "raw", skip, set())
         add_tree(zf, ROOT / "data" / "processed", "processed", skip, set())
         add_tree(zf, ROOT / "data" / "calibration", "calibration", skip, set())
+        # The online trial rows are the raw evidence behind the headline gate G6
+        # number. Shipping the report without them asks the marker to take 1.000
+        # on trust, and online_trial.py records them precisely so they survive.
+        add_tree(zf, ROOT / "data" / "online", "online", skip, set())
         ei = DELIV / "edge_impulse"
         if ei.exists():
             add_tree(zf, ei, "edge_impulse", skip, set())
