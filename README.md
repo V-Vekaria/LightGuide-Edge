@@ -11,6 +11,14 @@ Nano 33 BLE Sense, and tells the photographer what to adjust.
 
 ---
 
+> **Successor project:** [LightGuide v2](https://github.com/V-Vekaria/LightGuide-v2) inverts
+> this interaction. Where v1 classifies the current setup against a reference you physically
+> captured, v2 lets you *state* a target distance and guides you to it — so a setup can be
+> authored with no hardware present and is portable across boards. It reuses this project's
+> calibration method and replays these recorded traces, on an ESP32 with a companion web app.
+
+---
+
 ## Read this first
 
 **[`RUN.md`](RUN.md)** — *"which file do I actually run?"* Every command, in order.
